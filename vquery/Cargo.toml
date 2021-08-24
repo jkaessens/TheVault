@@ -1,0 +1,17 @@
+[package]
+name = "vquery"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+zip = { version = "0.5", default-features = false, features = ["deflate"] }
+structopt = "0.3"
+postgres = { version = "0.19", features = ["with-time-0_2"]}
+time = "0.2"
+crossbeam-channel = "0.5"
+walkdir = "2"
+sxd-xpath = "0.4"
+sxd-document = "*"
+csv = "1.1"
