@@ -6,7 +6,8 @@ arg_enum! {
     #[derive(Debug)]
     pub enum OutputType {
         CSV,
-        TSV
+        TSV,
+        Fastq
     }
 }
 

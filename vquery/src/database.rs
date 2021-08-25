@@ -1,6 +1,5 @@
 use std::error::Error;
-use std::path::Path;
-use std::thread;
+use std::path::{Path, PathBuf};
 
 use time::Date;
 
@@ -8,7 +7,7 @@ use crate::run::Run;
 use crate::runwalker::Walker;
 use crate::sample::Sample;
 
-const NUM_WORKER_THREADS: usize = 24;
+use rayon::prelude::*;
 
 struct Statements {
     delete_run: postgres::Statement,
@@ -59,14 +58,41 @@ impl Database {
         ))
     }
 
-    pub fn extract_fastqs(&mut self, samples: &[(String, Sample)]) -> Result<(), Box<dyn Error>> {
-        for (run, s) in samples {
-            // samples only contain fastq paths relative to the run root. Get the run root.
-            let row = self
+    pub fn get_run(&mut self, name: &str, fetch_samples: bool) -> Result<Run, Box<dyn Error>> {
+        let row = self.client.query_one(
+            "SELECT date,assay,chemistry,description,investigator,path FROM run WHERE name=$1",
+            &[&name.to_string()],
+        )?;
+
+        let pbs: String = row.get("path");
+        let mut run = Run {
+            name: name.to_string(),
+            date: row.get("date"),
+            assay: row.get("assay"),
+            chemistry: row.get("chemistry"),
+            description: row.get("description"),
+            investigator: row.get("investigator"),
+            path: PathBuf::from(pbs),
+            samples: Vec::new(),
+        };
+
+        if fetch_samples {
+            let ids = self
                 .client
-                .query_one("SELECT path FROM run WHERE name=$1", &[&run])?;
+                .query(
+                    "SELECT id FROM sample WHERE run_name=$1",
+                    &[&name.to_string()],
+                )?
+                .into_iter()
+                .map(|row| row.get::<&str, i32>("id"));
+
+            run.samples = ids
+                .filter_map(|id| self.get_sample(id).ok())
+                .map(|(_, sample)| sample)
+                .collect();
         }
-        Ok(())
+
+        Ok(run)
     }
 
     pub fn find_samples(&mut self, query: &str) -> Result<Vec<(String, Sample)>, Box<dyn Error>> {
@@ -103,11 +129,11 @@ impl Database {
     /// Returns true if a new run has been inserted, false if an existing one has been updated, or an Error
     fn update_or_insert_run(&mut self, r: Run) -> Result<bool, Box<dyn Error>> {
         let statements = Statements {
-            delete_run: self.client.prepare("DELETE FROM run WHERE name=$1")?,
-            insert_run: self.client.prepare("INSERT INTO run (name, date, assay, chemistry, description, investigator, path) VALUES ($1,$2,$3,$4,$5,$6,$7)")?,
-            insert_sample: self.client.prepare("INSERT INTO sample (run, name, dna_nr, project) VALUES ($1, $2, $3, $4) RETURNING id")?,
-            insert_fastq: self.client.prepare("INSERT INTO fastq (filename, sample_id, primer_set, lane, r) VALUES ($1,$2,$3,$4,$5)")?,
-        };
+        delete_run: self.client.prepare("DELETE FROM run WHERE name=$1")?,
+        insert_run: self.client.prepare("INSERT INTO run (name, date, assay, chemistry, description, investigator, path) VALUES ($1,$2,$3,$4,$5,$6,$7)")?,
+        insert_sample: self.client.prepare("INSERT INTO sample (run, name, dna_nr, project) VALUES ($1, $2, $3, $4) RETURNING id")?,
+        insert_fastq: self.client.prepare("INSERT INTO fastq (filename, sample_id, primer_set, lane, r) VALUES ($1,$2,$3,$4,$5)")?,
+    };
 
         // drop the run. It's easier to
         let rows = self.client.execute(&statements.delete_run, &[&r.name])?;
@@ -156,38 +182,24 @@ impl Database {
             }
         }
 
-        let mut w = Walker::new(path, NUM_WORKER_THREADS * 2);
+        let w = Walker::new(path);
+        info!(
+            "Starting run discovery using {} threads",
+            rayon::current_num_threads()
+        );
 
-        // set up worker threads that take care of the discovered runs
-        let mut threads: Vec<thread::JoinHandle<Vec<Run>>> = Vec::new();
-        for _i in 0..NUM_WORKER_THREADS {
-            let rx = w.create_receiver();
-            threads.push(thread::spawn(move || {
-                let mut runs: Vec<Run> = Vec::new();
-                while let Ok(p) = rx.recv() {
-                    //println!("{:?} Picking up {:?}", std::thread::current().id(), &p);
-                    match Run::from_path(&p) {
-                        Ok(r) => {
-                            runs.push(r);
-                        }
-                        Err(e) => {
-                            eprintln!("Could not create run from {}: {}", p.display(), e)
-                        }
-                    }
-                }
-                runs
-            }));
-        }
+        let paths: Vec<String> = w.run(&None)?;
+        let mut runs: Vec<Run> = vec![];
+        runs.par_extend(
+            paths
+                .into_par_iter()
+                .filter_map(|path| Run::from_path(&PathBuf::from(path)).ok()),
+        );
 
-        // start filling the thread queues
-        w.run(&latest)?;
-
-        // feed
-        for t in threads.into_iter() {
-            let runs = t.join().expect("Couldn't join with runner thread!");
-            for r in runs.into_iter() {
-                self.update_or_insert_run(r)?;
-            }
+        info!("Populating database");
+        // feed into database
+        for r in runs.into_iter() {
+            self.update_or_insert_run(r)?;
         }
         Ok(())
     }

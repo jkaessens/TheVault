@@ -4,7 +4,6 @@ use time::Date;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-use crossbeam_channel::bounded;
 use walkdir::{DirEntry, WalkDir};
 
 /// Parses a date string from a run name, that typically starts with "YYMMDD"
@@ -98,29 +97,14 @@ fn file_filter(entry: &DirEntry, start_date: &Option<time::Date>) -> bool {
 pub struct Walker {
     /// Root directory to start from
     ngsroot: PathBuf,
-
-    /// Receiver channel. Receiver handles will be cloned from this endpoint.
-    rx: crossbeam_channel::Receiver<PathBuf>,
-
-    /// Transmitter channel. Will send new discoveries here.
-    tx: crossbeam_channel::Sender<PathBuf>,
 }
 
 impl Walker {
     /// Creates a new path walker with a given capacity for the output channel
-    pub fn new(root: &Path, upper_bound: usize) -> Self {
-        let (tx, rx) = bounded(upper_bound);
-
+    pub fn new(root: &Path) -> Self {
         Walker {
             ngsroot: root.to_path_buf(),
-            rx,
-            tx,
         }
-    }
-
-    /// Get a new receiver handle to receive newly discovered runs from
-    pub fn create_receiver(&mut self) -> crossbeam_channel::Receiver<PathBuf> {
-        self.rx.clone()
     }
 
     /// Start the path walker, optionally with a given start date.
@@ -128,15 +112,16 @@ impl Walker {
     /// It will start pushing discovered runs into the receiver channels. `run` consumes itself when
     /// its done, dropping the tx channel, making receivers return from blocking reads when the
     /// channel is finally empty.
-    pub fn run(self, start_date: &Option<time::Date>) -> Result<()> {
+    pub fn run(self, start_date: &Option<time::Date>) -> Result<Vec<String>> {
         let walker = WalkDir::new(self.ngsroot).into_iter();
+        let mut paths: Vec<String> = Vec::new();
         for entry in walker.filter_entry(|d| file_filter(d, start_date)) {
             let entry = entry.unwrap();
             if entry.depth() == 3 {
-                self.tx.send(entry.path().to_owned())?;
+                paths.push(entry.path().to_string_lossy().to_string());
             }
         }
 
-        Ok(())
+        Ok(paths)
     }
 }

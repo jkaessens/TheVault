@@ -10,7 +10,9 @@ zip = { version = "0.5", default-features = false, features = ["deflate"] }
 structopt = "0.3"
 postgres = { version = "0.19", features = ["with-time-0_2"]}
 time = "0.2"
-crossbeam-channel = "0.5"
 walkdir = "2"
 clap = "2.33"
 rayon = "1.5"
+log = "0.4.0"
+env_logger = "0.8.4"
+

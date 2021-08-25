@@ -22,57 +22,6 @@ pub struct Run {
     pub chemistry: String,
 }
 
-/// Collects sample information from a demultiplexing report.
-///
-/// Returns a `Vec<Sample>` where every `Sample` has the following fields populated:
-/// - `name`
-/// - `dna_nr` (if available)
-/// - `project`
-///
-/// The remaining fields (currently only `files`) are default-initialized.
-///
-/// # Arguments
-///
-/// * `r` - a stream implementing the `Read` trait where the demultiplexing XML report will be read from
-///
-/// # Examples
-///
-/// ```
-/// let samples = collect_samples(File::open("data_mm0/Stats/DemultiplexingStats.xml")?);
-/// ```
-/*
-fn collect_samples<R: Read>(mut r: R) -> Vec<Sample> {
-let mut samples: Vec<Sample> = Vec::new();
-
-let mut content = "".to_owned();
-r.read_to_string(&mut content).expect("Failed to read DemultiplexingStats.xml");
-let xml = sxd_document::parser::parse(&content).expect("Failed to parse xml");
-let xpath_projects = "/Stats/Flowcell/Project/@name";
-let document = xml.as_document();
-
-let p = evaluate_xpath(&document, xpath_projects).expect("XPath failed");
-if let sxd_xpath::Value::Nodeset(ns) = p {
-for project in ns.into_iter() {
-let attr = project.attribute().unwrap();
-let project_name = attr.value();
-let s = evaluate_xpath(&document, &format!("/Stats/Flowcell/Project[@name='{}']/Sample/@name", project_name)).unwrap();
-if let sxd_xpath::Value::Nodeset(ns_s) = s {
-for sample in ns_s.into_iter() {
-let attr = sample.attribute().unwrap();
-
-if let Some(mut s) = parse_sample_name(attr.value()) {
-s.project = project_name.to_owned();
-samples.push(s);
-}
-}
-}
-}
-}
-
-samples
-}
-*/
-
 fn is_fastq(entry: &walkdir::DirEntry) -> bool {
     entry
         .file_name()
@@ -87,9 +36,7 @@ impl Run {
         let b = BufReader::new(r);
         let mut data_mode = false;
 
-        //let mut linebuf = String::new();
         for line in b.lines() {
-            // let Ok(bytes) = b.read_line(&mut linebuf) {
             if let Ok(linebuf) = line {
                 let parts: Vec<&str> = linebuf.split(",").collect();
 
@@ -129,7 +76,11 @@ impl Run {
                             s.name = parts[0].to_string();
                         }
                         _ => {
-                            eprintln!("got {} columns: {:?}", parts.len(), parts);
+                            error!(
+                                "Expected 10 or 6 columns. Got {} columns: {:?}",
+                                parts.len(),
+                                parts
+                            );
                             return Err(Box::from(
                                 "Expected 10 or 6 columns in [Data] section of sample sheet",
                             ));
@@ -151,22 +102,6 @@ impl Run {
 
     /// Constructor delegation, will pick up run infos from a directory
     fn from_dir(path: &Path) -> Result<Self> {
-        /*
-        let mut demux_info = path.to_owned();
-        demux_info.push("data_mm0");
-        demux_info.push("Stats");
-        demux_info.push("DemultiplexingStats.xml");
-
-
-
-        let f = File::open(demux_info);
-
-        if let Ok(demux) = f {
-        samples = collect_samples(demux);
-        } else {
-        eprintln!("{}: No demultiplexing stats found, skipping sample discovery!", run_name);
-        }
-        */
         let run_name = path
             .components()
             .last()
@@ -200,7 +135,7 @@ impl Run {
         if let Ok(mut ssheet) = f {
             r.parse_samplesheet(&mut ssheet, fastqs)?;
         } else {
-            eprintln!("{}: No SampleSheet.csv found, skipping!", run_name);
+            warn!("{}: No SampleSheet.csv found, skipping!", run_name);
         }
 
         Ok(r)
@@ -233,7 +168,7 @@ impl Run {
         if let Ok(mut ssheet) = z.by_name(&format!("{}/SampleSheet.csv", run_name)) {
             r.parse_samplesheet(&mut ssheet, fastqs)?;
         } else {
-            eprintln!("{}: No SampleSheet.csv found, skipping!", run_name);
+            warn!("{}: No SampleSheet.csv found, skipping!", run_name);
         }
 
         Ok(r)
