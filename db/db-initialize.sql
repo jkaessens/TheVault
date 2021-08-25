@@ -26,10 +26,7 @@ CREATE TABLE public.sample (
 
 
 ALTER TABLE ONLY public.fastq
-    ADD CONSTRAINT fastq_pkey PRIMARY KEY (filename);
-
-ALTER TABLE ONLY public.fastq
-    ADD CONSTRAINT fastq_uniq UNIQUE (sample_id, primer_set, lane, r);
+    ADD CONSTRAINT fastq_pkey PRIMARY KEY (sample_id, filename);
 
 ALTER TABLE ONLY public.run
     ADD CONSTRAINT run_pkey PRIMARY KEY (name);

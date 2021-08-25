@@ -1,16 +1,14 @@
-use std::path::{Path, PathBuf};
 use std::error::Error;
+use std::path::{Path, PathBuf};
 use time::Date;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 use crossbeam_channel::bounded;
 use walkdir::{DirEntry, WalkDir};
-use std::num::ParseIntError;
 
 /// Parses a date string from a run name, that typically starts with "YYMMDD"
 pub(crate) fn parse_date(source: &str) -> Result<time::Date> {
-
     if source.len() < 6 {
         return Err(Box::from("Date string too short"));
     }
@@ -18,7 +16,6 @@ pub(crate) fn parse_date(source: &str) -> Result<time::Date> {
     let month = source[2..4].parse::<u8>()?;
     let day = source[4..6].parse::<u8>()?;
     Ok(Date::try_from_ymd(year, month, day)?)
-
 }
 
 /// Serves as file filter for the directory tree walker.
@@ -33,22 +30,31 @@ pub(crate) fn parse_date(source: &str) -> Result<time::Date> {
 ///      if the file date is earlier than `start_date`
 fn file_filter(entry: &DirEntry, start_date: &Option<time::Date>) -> bool {
     // Path must either be directory or zip file
-    if ! (entry.file_type().is_dir() ) {
-        if !entry.file_name().to_ascii_lowercase().to_string_lossy().ends_with(".zip") {
+    if !(entry.file_type().is_dir()) {
+        if !entry
+            .file_name()
+            .to_ascii_lowercase()
+            .to_string_lossy()
+            .ends_with(".zip")
+        {
             return false;
         }
     }
 
     // if depth is 1 or 2, that is, we are still in the year/month hierarchy,
     // filter by date early on
-    if  entry.file_type().is_dir()  {
+    if entry.file_type().is_dir() {
         match entry.depth() {
             // always allow root
-            0 => { return true; }
+            0 => {
+                return true;
+            }
             // "year" part
             1 => {
                 if let Some(d) = start_date {
-                    let file_year = entry.file_name().to_string_lossy()[0..3].parse::<i32>().unwrap();
+                    let file_year = entry.file_name().to_string_lossy()[0..3]
+                        .parse::<i32>()
+                        .unwrap();
                     if file_year < d.year() {
                         return false;
                     }
@@ -58,7 +64,9 @@ fn file_filter(entry: &DirEntry, start_date: &Option<time::Date>) -> bool {
             // some weird folders also have zip files here
             2 => {
                 if let Some(d) = start_date {
-                    let file_month = entry.file_name().to_string_lossy()[0..1].parse::<u8>().unwrap();
+                    let file_month = entry.file_name().to_string_lossy()[0..1]
+                        .parse::<u8>()
+                        .unwrap();
                     if file_month < d.month() {
                         return false;
                     }
@@ -77,7 +85,9 @@ fn file_filter(entry: &DirEntry, start_date: &Option<time::Date>) -> bool {
                     }
                 }
             }
-            _ => { return false; }
+            _ => {
+                return false;
+            }
         }
     }
 
@@ -97,7 +107,6 @@ pub struct Walker {
 }
 
 impl Walker {
-
     /// Creates a new path walker with a given capacity for the output channel
     pub fn new(root: &Path, upper_bound: usize) -> Self {
         let (tx, rx) = bounded(upper_bound);
@@ -124,11 +133,10 @@ impl Walker {
         for entry in walker.filter_entry(|d| file_filter(d, start_date)) {
             let entry = entry.unwrap();
             if entry.depth() == 3 {
-                //println!("Entry: {}", entry.path().display());
                 self.tx.send(entry.path().to_owned())?;
             }
         }
 
-    Ok(())
+        Ok(())
     }
 }

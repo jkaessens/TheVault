@@ -1,13 +1,12 @@
-use std::io::prelude::*;
-use zip::ZipArchive;
-use std::path::{PathBuf, Path};
+use crate::runwalker;
 use std::error::Error;
 use std::fs::File;
-use crate::runwalker;
+use std::io::prelude::*;
+use std::path::{Path, PathBuf};
+use zip::ZipArchive;
 
-use sxd_xpath::evaluate_xpath;
-use std::io::BufReader;
 use crate::sample::Sample;
+use std::io::BufReader;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -43,56 +42,66 @@ pub struct Run {
 /// ```
 /*
 fn collect_samples<R: Read>(mut r: R) -> Vec<Sample> {
-    let mut samples: Vec<Sample> = Vec::new();
+let mut samples: Vec<Sample> = Vec::new();
 
-    let mut content = "".to_owned();
-    r.read_to_string(&mut content).expect("Failed to read DemultiplexingStats.xml");
-    let xml = sxd_document::parser::parse(&content).expect("Failed to parse xml");
-    let xpath_projects = "/Stats/Flowcell/Project/@name";
-    let document = xml.as_document();
+let mut content = "".to_owned();
+r.read_to_string(&mut content).expect("Failed to read DemultiplexingStats.xml");
+let xml = sxd_document::parser::parse(&content).expect("Failed to parse xml");
+let xpath_projects = "/Stats/Flowcell/Project/@name";
+let document = xml.as_document();
 
-    let p = evaluate_xpath(&document, xpath_projects).expect("XPath failed");
-    if let sxd_xpath::Value::Nodeset(ns) = p {
-        for project in ns.into_iter() {
-            let attr = project.attribute().unwrap();
-            let project_name = attr.value();
-            let s = evaluate_xpath(&document, &format!("/Stats/Flowcell/Project[@name='{}']/Sample/@name", project_name)).unwrap();
-            if let sxd_xpath::Value::Nodeset(ns_s) = s {
-                for sample in ns_s.into_iter() {
-                    let attr = sample.attribute().unwrap();
+let p = evaluate_xpath(&document, xpath_projects).expect("XPath failed");
+if let sxd_xpath::Value::Nodeset(ns) = p {
+for project in ns.into_iter() {
+let attr = project.attribute().unwrap();
+let project_name = attr.value();
+let s = evaluate_xpath(&document, &format!("/Stats/Flowcell/Project[@name='{}']/Sample/@name", project_name)).unwrap();
+if let sxd_xpath::Value::Nodeset(ns_s) = s {
+for sample in ns_s.into_iter() {
+let attr = sample.attribute().unwrap();
 
-                    if let Some(mut s) = parse_sample_name(attr.value()) {
-                        s.project = project_name.to_owned();
-                        samples.push(s);
-                    }
-                }
-            }
-        }
-    }
+if let Some(mut s) = parse_sample_name(attr.value()) {
+s.project = project_name.to_owned();
+samples.push(s);
+}
+}
+}
+}
+}
 
-    samples
+samples
 }
 */
 
+fn is_fastq(entry: &walkdir::DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .map(|s| s.ends_with(".fastq.gz"))
+        .unwrap_or(false)
+}
 
 impl Run {
     /// Parses the run's SampleSheet.csv for auxiliary run information
-    fn parse_samplesheet<R: Read>(&mut self, r: R) -> Result<()> {
-        let mut b = BufReader::new(r);
+    fn parse_samplesheet<R: Read>(&mut self, r: R, fastqs: Vec<String>) -> Result<()> {
+        let b = BufReader::new(r);
         let mut data_mode = false;
 
         //let mut linebuf = String::new();
-        for line in b.lines() {// let Ok(bytes) = b.read_line(&mut linebuf) {
+        for line in b.lines() {
+            // let Ok(bytes) = b.read_line(&mut linebuf) {
             if let Ok(linebuf) = line {
                 let parts: Vec<&str> = linebuf.split(",").collect();
 
-                if !data_mode  {
+                if !data_mode {
                     if parts.len() >= 2 {
                         match parts[0] {
-                            "Investigator Name" => { self.investigator = parts[1].to_owned().to_string() }
-                            "Assay" => { self.assay = parts[1].to_owned().to_string() }
-                            "Description" => { self.description = parts[1].to_owned().to_string() }
-                            "Chemistry" => { self.chemistry = parts[1].to_owned().to_string() }
+                            "Investigator Name" => {
+                                self.investigator = parts[1].to_owned().to_string()
+                            }
+                            "Assay" => self.assay = parts[1].to_owned().to_string(),
+                            "Description" => self.description = parts[1].to_owned().to_string(),
+                            "Chemistry" => self.chemistry = parts[1].to_owned().to_string(),
                             _ => {}
                         }
                     } else if parts[0] == "[Data]" {
@@ -121,9 +130,18 @@ impl Run {
                         }
                         _ => {
                             eprintln!("got {} columns: {:?}", parts.len(), parts);
-                            return Err(Box::from("Expected 10 or 6 columns in [Data] section of sample sheet"));
+                            return Err(Box::from(
+                                "Expected 10 or 6 columns in [Data] section of sample sheet",
+                            ));
                         }
                     }
+
+                    s.files = fastqs
+                        .iter()
+                        .filter(|fastq| fastq.contains(&s.name))
+                        .map(|s| s.clone())
+                        .collect();
+
                     self.samples.push(s);
                 }
             }
@@ -144,14 +162,26 @@ impl Run {
         let f = File::open(demux_info);
 
         if let Ok(demux) = f {
-            samples = collect_samples(demux);
+        samples = collect_samples(demux);
         } else {
-            eprintln!("{}: No demultiplexing stats found, skipping sample discovery!", run_name);
+        eprintln!("{}: No demultiplexing stats found, skipping sample discovery!", run_name);
         }
         */
-        let run_name = path.components().last().unwrap().as_os_str().to_string_lossy();
+        let run_name = path
+            .components()
+            .last()
+            .unwrap()
+            .as_os_str()
+            .to_string_lossy();
 
         let run_date = runwalker::parse_date(&run_name);
+
+        // make fastq file list
+        let mut fastqs: Vec<String> = Vec::new();
+        let walker = walkdir::WalkDir::new(&path).into_iter();
+        for entry in walker.filter_entry(|e| is_fastq(e)) {
+            fastqs.push(entry?.path().to_string_lossy().to_string());
+        }
 
         let mut r = Run {
             date: run_date?,
@@ -168,10 +198,11 @@ impl Run {
         ss.push("SampleSheet.csv");
         let f = File::open(ss);
         if let Ok(mut ssheet) = f {
-            r.parse_samplesheet(&mut ssheet)?;
+            r.parse_samplesheet(&mut ssheet, fastqs)?;
         } else {
             eprintln!("{}: No SampleSheet.csv found, skipping!", run_name);
         }
+
         Ok(r)
     }
 
@@ -179,17 +210,6 @@ impl Run {
     fn from_zip(path: &Path) -> Result<Self> {
         let mut z = ZipArchive::new(File::open(path)?)?;
         let run_name = path.file_stem().unwrap().to_string_lossy();
-
-        /*
-
-        if let Ok(statsxml) = z.by_name(&format!("{}/data_mm0/Stats/DemultiplexingStats.xml", run_name)) {
-            samples = collect_samples(statsxml);
-        } else {
-            eprintln!("{}: No demultiplexing stats found, skipping sample discovery!", run_name);
-        }
-
-
-         */
 
         let run_date = runwalker::parse_date(&run_name);
 
@@ -204,8 +224,14 @@ impl Run {
             investigator: String::from(""),
         };
 
+        let fastqs: Vec<String> = z
+            .file_names()
+            .filter(|name| name.ends_with(".fastq.gz"))
+            .map(|n| n.to_string())
+            .collect();
+
         if let Ok(mut ssheet) = z.by_name(&format!("{}/SampleSheet.csv", run_name)) {
-            r.parse_samplesheet(&mut ssheet)?;
+            r.parse_samplesheet(&mut ssheet, fastqs)?;
         } else {
             eprintln!("{}: No SampleSheet.csv found, skipping!", run_name);
         }
@@ -229,7 +255,7 @@ impl Run {
 mod tests {
     use super::*;
     #[test]
-    fn run_dir() ->  Result<()> {
+    fn run_dir() -> Result<()> {
         let r = Run::from_dir(Path::new("../test/210802_M70821_0114_000000000-DCWMD"))?;
         println!("Run: {:?}", r);
         Ok(())

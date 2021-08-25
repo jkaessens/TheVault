@@ -1,10 +1,23 @@
+use clap::arg_enum;
 use std::path::PathBuf;
 use structopt::StructOpt;
+
+arg_enum! {
+    #[derive(Debug)]
+    pub enum OutputType {
+        CSV,
+        TSV
+    }
+}
 
 #[derive(StructOpt, Debug)]
 pub enum Command {
     /// Query the Vault database
     Query {
+        /// Type of output
+        #[structopt(possible_values=&OutputType::variants(), default_value="TSV", case_insensitive=true, short, long)]
+        output: OutputType,
+
         /// A full-text search string
         query: String,
     },
@@ -16,9 +29,8 @@ pub enum Command {
         force: bool,
 
         /// Config file location, tries to locate sequencing runs from here
-        #[structopt(default_value="/mnt/ngs/01-Rohdaten", long, parse(from_os_str))]
+        #[structopt(default_value = "/mnt/ngs/01-Rohdaten", long, parse(from_os_str))]
         rundir: PathBuf,
-
     },
 
     /// Re-creates an empty database
@@ -27,12 +39,14 @@ pub enum Command {
 
 #[derive(StructOpt, Debug)]
 pub struct Opt {
-
     /// DB connection URI
-    #[structopt(default_value="postgresql://postgres:password@localhost/vault", long)]
+    #[structopt(default_value = "postgresql://postgres:password@localhost/vault", long)]
     pub connstr: String,
 
-    #[structopt(subcommand)]
-    pub cmd: Command
-}
+    /// Number of threads to use (default: all cores)
+    #[structopt(default_value = "0", long, short)]
+    pub threads: usize,
 
+    #[structopt(subcommand)]
+    pub cmd: Command,
+}

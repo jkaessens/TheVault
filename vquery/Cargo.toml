@@ -12,6 +12,5 @@ postgres = { version = "0.19", features = ["with-time-0_2"]}
 time = "0.2"
 crossbeam-channel = "0.5"
 walkdir = "2"
-sxd-xpath = "0.4"
-sxd-document = "*"
-csv = "1.1"
+clap = "2.33"
+rayon = "1.5"
