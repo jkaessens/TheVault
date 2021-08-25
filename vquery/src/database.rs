@@ -97,8 +97,8 @@ impl Database {
 
     pub fn find_samples(&mut self, query: &str) -> Result<Vec<(String, Sample)>, Box<dyn Error>> {
         let rows = self.client.query(
-            "SELECT DISTINCT sample_id FROM fastq WHERE filename like CONCAT('%', $1::text, '%')",
-            &[&query],
+            "SELECT DISTINCT sample_id FROM fastq WHERE LOWER(filename) like CONCAT('%', $1::text, '%')",
+            &[&query.to_lowercase()],
         )?;
 
         let mut samples: Vec<(String, Sample)> = Vec::new();

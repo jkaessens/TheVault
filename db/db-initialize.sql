@@ -43,4 +43,3 @@ ALTER TABLE ONLY public.fastq
 ALTER TABLE ONLY public.sample
     ADD CONSTRAINT sample_fkey_run FOREIGN KEY (run) REFERENCES public.run(name) ON UPDATE CASCADE ON DELETE CASCADE NOT VALID;
 
-
