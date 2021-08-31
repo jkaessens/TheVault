@@ -113,7 +113,7 @@ impl Walker {
     /// its done, dropping the tx channel, making receivers return from blocking reads when the
     /// channel is finally empty.
     pub fn run(self, start_date: &Option<time::Date>) -> Result<Vec<String>> {
-        let walker = WalkDir::new(self.ngsroot).into_iter();
+        let walker = WalkDir::new(self.ngsroot).follow_links(true).into_iter();
         let mut paths: Vec<String> = Vec::new();
         for entry in walker.filter_entry(|d| file_filter(d, start_date)) {
             let entry = entry.unwrap();

@@ -17,7 +17,11 @@ pub enum Command {
     Query {
         /// Type of output
         #[structopt(possible_values=&OutputType::variants(), default_value="TSV", case_insensitive=true, short, long)]
-        output: OutputType,
+        format: OutputType,
+
+        /// Filter
+        #[structopt(long)]
+        filter: Vec<String>,
 
         /// A full-text search string
         query: String,

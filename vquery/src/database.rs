@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
-
 use time::Date;
 
 use crate::run::Run;
@@ -20,7 +20,15 @@ pub struct Database {
     client: postgres::Client,
 }
 
+#[derive(Default)]
+pub struct UpdateStats {
+    pub runs: usize,
+    pub samples: usize,
+    pub fastqs: usize,
+}
+
 impl Database {
+    /// Creates the database connection and optionally fully resets it
     pub fn new(connstr: &str, initialize: bool) -> Result<Self, Box<dyn Error>> {
         let mut client = postgres::Client::connect(connstr, postgres::NoTls)?;
 
@@ -36,9 +44,10 @@ impl Database {
         Ok(db)
     }
 
+    /// Retrieves a sample by their id
     pub fn get_sample(&mut self, sample_id: i32) -> Result<(String, Sample), Box<dyn Error>> {
         let samplerow = self.client.query_one(
-            "SELECT id,run,name,project,dna_nr FROM sample WHERE sample.id=$1",
+            "SELECT id,run,name,project,dna_nr,lims_id,primer_set FROM sample WHERE sample.id=$1",
             &[&sample_id],
         )?;
 
@@ -53,11 +62,18 @@ impl Database {
                 name: samplerow.get("name"),
                 project: samplerow.get("project"),
                 dna_nr: samplerow.get("dna_nr"),
+                lims_id: samplerow.get("lims_id"),
+                primer_set: samplerow.get("primer_set"),
                 files: fastqs,
             },
         ))
     }
 
+    /// Fetches a run from the database, optionally including all samples and their associated
+    /// fastq entries.
+    /// # Parameters
+    /// * name: exact name of the run
+    /// * fetch_samples: whether the contained samples should also be fetched (expensive)
     pub fn get_run(&mut self, name: &str, fetch_samples: bool) -> Result<Run, Box<dyn Error>> {
         let row = self.client.query_one(
             "SELECT date,assay,chemistry,description,investigator,path FROM run WHERE name=$1",
@@ -95,22 +111,59 @@ impl Database {
         Ok(run)
     }
 
-    pub fn find_samples(&mut self, query: &str) -> Result<Vec<(String, Sample)>, Box<dyn Error>> {
-        let rows = self.client.query(
-            "SELECT DISTINCT sample_id FROM fastq WHERE LOWER(filename) like CONCAT('%', $1::text, '%')",
-            &[&query.to_lowercase()],
-        )?;
+    fn filter_filters(filter: &Vec<String>) -> HashMap<String, String> {
+        let mut hf: HashMap<String, String> = HashMap::new();
+        for f in filter {
+            let parts: Vec<String> = f.split("=").map(|s| s.to_string().to_lowercase()).collect();
+            if parts.len() < 2 || parts.len() > 2 {
+                warn!(
+                    "Skipping filter '{}'. Invalid syntax. Only KEY=VALUE is allowed",
+                    f
+                );
+                continue;
+            }
+
+            hf.insert(parts[0].to_string(), parts[1].to_string());
+        }
+        hf
+    }
+
+    /// find all samples where an associated FASTQ file has a match on the query
+    pub fn find_samples(
+        &mut self,
+        query: &str,
+        filter: &Vec<String>,
+    ) -> Result<Vec<(String, Sample)>, Box<dyn Error>> {
+        // merge filters into SQL query
+        let filters = Self::filter_filters(filter);
+        let mut filter_sql = String::from("");
+        for f in filters.keys() {
+            filter_sql.push_str(&format!(
+                " AND LOWER(sample.{}) like '{}'",
+                f,
+                filters.get(f).unwrap()
+            ));
+        }
+
+        let statement =
+            format!("SELECT sample.id as sample_id FROM sample INNER JOIN fastq ON sample.id=fastq.sample_id WHERE LOWER(CONCAT(dna_nr,filename)) like CONCAT('%', $1::text,'%'){}", filter_sql);
+
+        debug!("Q: {}", &statement);
+        let rows = self.client.query(&*statement, &[&query.to_lowercase()])?;
 
         let mut samples: Vec<(String, Sample)> = Vec::new();
 
-        for row in rows.into_iter() {
-            let sample_id: i32 = row.get("sample_id");
-            samples.push(self.get_sample(sample_id)?);
-        }
+        let mut sample_ids: Vec<i32> = rows.into_iter().map(|r| r.get("sample_id")).collect();
+        sample_ids.sort();
+        sample_ids.dedup();
 
+        for id in sample_ids {
+            samples.push(self.get_sample(id)?);
+        }
         Ok(samples)
     }
 
+    /// Retrieve the latest known run date
     fn get_last_run_date(&mut self) -> Result<Option<Date>, Box<dyn Error>> {
         match self
             .client
@@ -124,26 +177,35 @@ impl Database {
         }
     }
 
+    fn normalize_dna_nr(dnanr: &str) -> String {
+        let parts: Vec<&str> = dnanr.split("-").collect();
+        if parts.len() != 2 {
+            return dnanr.to_string();
+        }
+        format!(
+            "{:02}-{:05}",
+            parts[0].parse::<u32>().unwrap(),
+            parts[1].parse::<u32>().unwrap()
+        )
+    }
     /// Update or inserts a run into the datebase
     ///
     /// Returns true if a new run has been inserted, false if an existing one has been updated, or an Error
-    fn update_or_insert_run(&mut self, r: Run) -> Result<bool, Box<dyn Error>> {
+    fn update_or_insert_run<C: postgres::GenericClient>(
+        client: &mut C,
+        r: Run,
+        stats: &mut UpdateStats,
+    ) -> Result<(), Box<dyn Error>> {
         let statements = Statements {
-        delete_run: self.client.prepare("DELETE FROM run WHERE name=$1")?,
-        insert_run: self.client.prepare("INSERT INTO run (name, date, assay, chemistry, description, investigator, path) VALUES ($1,$2,$3,$4,$5,$6,$7)")?,
-        insert_sample: self.client.prepare("INSERT INTO sample (run, name, dna_nr, project) VALUES ($1, $2, $3, $4) RETURNING id")?,
-        insert_fastq: self.client.prepare("INSERT INTO fastq (filename, sample_id, primer_set, lane, r) VALUES ($1,$2,$3,$4,$5)")?,
-    };
+            delete_run: client.prepare("DELETE FROM run WHERE name=$1")?,
+            insert_run: client.prepare("INSERT INTO run (name, date, assay, chemistry, description, investigator, path) VALUES ($1,$2,$3,$4,$5,$6,$7)")?,
+            insert_sample: client.prepare("INSERT INTO sample (run, name, dna_nr, project,lims_id,primer_set) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id")?,
+            insert_fastq: client.prepare("INSERT INTO fastq (filename, sample_id) VALUES ($1,$2)")?,
+        };
 
         // drop the run. It's easier to
-        let rows = self.client.execute(&statements.delete_run, &[&r.name])?;
-        /*
-        delete_run: client.prepare("DELETE FROM run WHERE name=$1")?,
-        insert_run: client.prepare("INSERT INTO run (name, `date`, assay, chemistry, description, investigator, path,) VALUES ($1,$2,$3,$4,$5,$6,$7)")?,
-        insert_sample: client.prepare("INSERT INTO sample (run, name, dna_nr) VALUES (run, name, dna_nr) RETURNING id")?,
-        insert_fastq: client.prepare("INSERT INTO fastq (filename, sample_id, primer_set, lane, r) VALUES ($1,$2,$3,$4,$5)")?,
-        */
-        self.client.execute(
+        client.execute(&statements.delete_run, &[&r.name])?;
+        client.execute(
             &statements.insert_run,
             &[
                 &r.name,
@@ -155,33 +217,44 @@ impl Database {
                 &r.path.display().to_string(),
             ],
         )?;
+        stats.runs += 1;
+        stats.samples += r.samples.len();
 
         for s in r.samples.into_iter() {
-            //println!("add sample {}/{}", r.name, s.name);
-            let row = self.client.query_one(
+            let new_dna_nr = Self::normalize_dna_nr(&s.dna_nr);
+            let row = client.query_one(
                 &statements.insert_sample,
-                &[&r.name, &s.name, &s.dna_nr, &s.project],
+                &[
+                    &r.name,
+                    &s.name,
+                    &new_dna_nr,
+                    &s.project,
+                    &s.lims_id,
+                    &s.primer_set,
+                ],
             )?;
             let id: i32 = row.get::<usize, i32>(0);
+            stats.fastqs += s.files.len();
             for f in s.files {
-                self.client
-                    .execute(&statements.insert_fastq, &[&f, &id, &"", &0, &0])?;
+                client.execute(&statements.insert_fastq, &[&f, &id])?;
             }
         }
-        Ok(rows == 0)
+        Ok(())
     }
 
+    /// Updates the run database starting with the latest run that could be found
     pub fn update(&mut self, path: &Path) -> Result<(), Box<dyn Error>> {
         let latest = self.get_last_run_date()?;
         match &latest {
             None => {
-                println!("No run in database, starting from scratch.");
+                info!("No run in database, starting from scratch.");
             }
             Some(d) => {
-                println!("Latest run in database is from {}, starting there.", d);
+                info!("Latest run in database is from {}, starting there.", d);
             }
         }
 
+        // run discovery on path
         let w = Walker::new(path);
         info!(
             "Starting run discovery using {} threads",
@@ -196,11 +269,18 @@ impl Database {
                 .filter_map(|path| Run::from_path(&PathBuf::from(path)).ok()),
         );
 
+        let mut stats = UpdateStats::default();
         info!("Populating database");
         // feed into database
+        let mut transaction = self.client.transaction()?;
         for r in runs.into_iter() {
-            self.update_or_insert_run(r)?;
+            Self::update_or_insert_run(&mut transaction, r, &mut stats)?;
         }
+        transaction.commit()?;
+        info!(
+            "Done. {} runs, {} samples and {} fastq files where added to the database.",
+            stats.runs, stats.samples, stats.fastqs
+        );
         Ok(())
     }
 }
