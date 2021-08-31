@@ -80,14 +80,6 @@ fn parse_from_fastq(samples: &mut Vec<Sample>, fastq: &str) {
     }
 }
 
-fn normalize_dna_nr(dnanr: &str) -> String {
-    let parts: Vec<&str> = dnanr.split("-").collect();
-    if parts.len() != 2 {
-        return dnanr.to_string();
-    }
-    format!("{:02}-{:05}", parts[0], parts[1])
-}
-
 fn parse_samplename(s: &mut Sample) {
     lazy_static! {
         static ref RE_DNA: Regex = Regex::new(r"(?:D-)?(?P<dnanr>\d\d-\d{3,})").unwrap();

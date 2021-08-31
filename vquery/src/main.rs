@@ -1,6 +1,5 @@
 mod config;
 mod database;
-mod query;
 mod run;
 mod runwalker;
 mod sample;
