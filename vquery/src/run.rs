@@ -2,6 +2,7 @@ use crate::runwalker;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
@@ -9,6 +10,8 @@ use crate::sample::Sample;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::io::BufReader;
+
+use walkdir::WalkDir;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -153,7 +156,106 @@ fn assign_fastqs(mut samples: &mut Vec<Sample>, mut fastqs: Vec<String>) -> usiz
 
     return 0;
 }
+
 impl Run {
+    fn find_cellsheet(&mut self, basedir: &Path) -> Option<PathBuf> {
+        // build path based on date
+        let mut cellsheet_dir = PathBuf::from(basedir);
+        let (year, month, _) = self.date.as_ymd();
+        cellsheet_dir.push(year.to_string());
+
+        // No spikeINBC before 2016. For 2016, this will also not work
+        // but we won't find them there anyway
+        cellsheet_dir.push(match month {
+            1 => "01_Januar",
+            2 => "02_Feburar",
+            3 => "03_März",
+            4 => "04_April",
+            5 => "05_Mai",
+            6 => "06_Juni",
+            7 => "07_Juli",
+            8 => "08_August",
+            9 => "09_September",
+            10 => "10_Oktober",
+            11 => "11_November",
+            12 => "12_Dezember",
+            _ => panic!("Bad month number"),
+        });
+        
+        // Now the run folder. Take the run date as YYYYMMDD and add the M-number and then
+        // have walkdir find the final spikeINBC
+        let run_prefix = String::from("20") + &self.name.split_inclusive("_").collect::<Vec<&str>>()[0..2].concat();
+        debug!("run prefix is {}", run_prefix);
+        let mut latest_cellsheet = Option::<PathBuf>::None;
+        let mut latest_date: i32 = 0;
+        for entry in WalkDir::new(cellsheet_dir).max_depth(3)
+                .into_iter()
+                .filter_entry(|e| {
+                    match e.depth() {
+                        0 => true,
+                        1 => e.file_name().to_string_lossy().starts_with(&run_prefix),
+                        2 => e.file_name().to_string_lossy().starts_with("Start_"),
+                        3 => { let n = e.file_name().to_string_lossy(); n.ends_with("spikeINBC.txt") || n.ends_with("spikeINBC.csv") }
+                        _ => panic!("Went too deep into cell sheet discovery"),
+                    }
+                })
+                .filter_map(|e| e.ok()) {
+                    
+            if entry.depth() == 3 {
+                let file_name = entry.file_name().to_string_lossy();
+                let parts = file_name.split("_").collect::<Vec<&str>>();
+                if parts.len() == 1 && latest_date == 0{
+                    latest_cellsheet = Some(entry.into_path());
+                } else if parts.len() == 2 {
+                    let this_date = parts[0].parse::<i32>().unwrap_or(0);
+                    if this_date >= latest_date {
+                        latest_cellsheet = Some(entry.into_path());
+                        latest_date = this_date;
+                    }
+                }
+            }
+        }
+        latest_cellsheet
+    }
+
+    fn parse_cellsheet(&mut self, csheet: &Path) -> Result<(usize)> {
+        // 1 cell: 6.5 picogram DNA
+        // 100 nanogram DNA = ca. 15384.6 cells
+        static CELLS_PER_NG: f32 = 15384.6;
+
+        let mut samplecount = 0;
+
+        let csheetf = File::open(csheet)?;
+        for line in std::io::BufReader::new(csheetf).lines() {
+            let line = match line {
+                Err(e) =>{
+                    error!("Cannot parse {}: {}", csheet.display(), e);
+                    continue;
+                }
+                Ok(line) => line
+            };
+            
+            let parts = line.split(",").collect::<Vec<&str>>();
+            if line.len() > 0 && parts.len() != 4 {
+                debug!("{} cellsheet {} has {} columns!?", &self.name, csheet.display(), parts.len());
+                return Err(Box::from("Malformed cellsheet"));
+            }
+
+            if parts[0] == "sample_ID" {
+                continue;
+            }
+
+            let mut candidates: Vec<&mut Sample> = self.samples.iter_mut().filter(|s| s.name == parts[0]).collect();
+            if candidates.len() != 1 {
+                debug!("{} cell sheet {} entry {} matches {} known samples", self.name, csheet.display(), parts[0], candidates.len());
+            } else {
+                candidates[0].cells = (parts[1].parse::<f32>().unwrap_or(0.0)/100.0 * CELLS_PER_NG).round() as i32;
+                samplecount += 1;
+            }
+        }
+        Ok(samplecount)
+    }
+
     /// Parses the run's SampleSheet.csv for auxiliary run information
     fn parse_samplesheet<R: Read>(&mut self, r: R, fastqs: Vec<String>) -> Result<()> {
         let b = BufReader::new(r);
@@ -348,12 +450,26 @@ impl Run {
     /// Create a `Run` instance from a given path.
     ///
     /// The path might either be a sequencing run directory or a zip file containing one.
-    pub fn from_path(path: &Path) -> Result<Self> {
-        if path.is_dir() {
-            Self::from_dir(path)
+    pub fn from_path(rundir: &Path, cellsheetdir: &Path) -> Result<Self> {
+        let run = if rundir.is_dir() {
+            Self::from_dir(rundir)
         } else {
-            Self::from_zip(path)
-        }
+            Self::from_zip(rundir)
+        };
+
+        
+        run.and_then(|mut r| {
+            if let Some(csheet) = r.find_cellsheet(cellsheetdir) {
+                if let Err(e) = r.parse_cellsheet(&csheet) {
+                    warn!("{}: Found a cell sheet but could not parse it: {}", r.name, e);
+                } else {
+                    debug!("{}: Cell sheet imported", r.name);
+                }
+            } else {
+                debug!("{}: No cell sheet found", r.name);
+            }
+            Ok(r)
+        })
     }
 }
 

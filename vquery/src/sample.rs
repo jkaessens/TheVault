@@ -8,4 +8,5 @@ pub struct Sample {
     pub files: Vec<String>,
     pub lims_id: i64,
     pub primer_set: String,
+    pub cells: i32,
 }

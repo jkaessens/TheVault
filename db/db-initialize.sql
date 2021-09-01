@@ -20,7 +20,8 @@ CREATE TABLE public.sample (
     project character varying(200) NOT NULL,
     lims_id bigint,
     primer_set character varying(200),
-    id serial NOT NULL
+    id serial NOT NULL,
+    cells integer
 );
 
 

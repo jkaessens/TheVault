@@ -47,7 +47,7 @@ impl Database {
     /// Retrieves a sample by their id
     pub fn get_sample(&mut self, sample_id: i32) -> Result<(String, Sample), Box<dyn Error>> {
         let samplerow = self.client.query_one(
-            "SELECT id,run,name,project,dna_nr,lims_id,primer_set FROM sample WHERE sample.id=$1",
+            "SELECT id,run,name,project,dna_nr,lims_id,primer_set,cells FROM sample WHERE sample.id=$1",
             &[&sample_id],
         )?;
 
@@ -65,6 +65,7 @@ impl Database {
                 lims_id: samplerow.get("lims_id"),
                 primer_set: samplerow.get("primer_set"),
                 files: fastqs,
+                cells: samplerow.get("cells"),
             },
         ))
     }
@@ -199,7 +200,7 @@ impl Database {
         let statements = Statements {
             delete_run: client.prepare("DELETE FROM run WHERE name=$1")?,
             insert_run: client.prepare("INSERT INTO run (name, date, assay, chemistry, description, investigator, path) VALUES ($1,$2,$3,$4,$5,$6,$7)")?,
-            insert_sample: client.prepare("INSERT INTO sample (run, name, dna_nr, project,lims_id,primer_set) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id")?,
+            insert_sample: client.prepare("INSERT INTO sample (run, name, dna_nr, project,lims_id,primer_set,cells) VALUES ($1, $2, $3, $4, $5, $6,$7) RETURNING id")?,
             insert_fastq: client.prepare("INSERT INTO fastq (filename, sample_id) VALUES ($1,$2)")?,
         };
 
@@ -231,6 +232,7 @@ impl Database {
                     &s.project,
                     &s.lims_id,
                     &s.primer_set,
+                    &s.cells,
                 ],
             )?;
             let id: i32 = row.get::<usize, i32>(0);
@@ -243,7 +245,7 @@ impl Database {
     }
 
     /// Updates the run database starting with the latest run that could be found
-    pub fn update(&mut self, path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn update(&mut self, rundir: &Path, celldir: &Path) -> Result<(), Box<dyn Error>> {
         let latest = self.get_last_run_date()?;
         match &latest {
             None => {
@@ -255,7 +257,7 @@ impl Database {
         }
 
         // run discovery on path
-        let w = Walker::new(path);
+        let w = Walker::new(rundir);
         info!(
             "Starting run discovery using {} threads",
             rayon::current_num_threads()
@@ -266,7 +268,9 @@ impl Database {
         runs.par_extend(
             paths
                 .into_par_iter()
-                .filter_map(|path| Run::from_path(&PathBuf::from(path)).ok()),
+                .filter_map(|path| 
+                    Run::from_path(&PathBuf::from(path), celldir).ok())
+                ,
         );
 
         let mut stats = UpdateStats::default();

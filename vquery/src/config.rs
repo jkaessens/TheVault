@@ -1,23 +1,18 @@
-use clap::arg_enum;
+
 use std::path::PathBuf;
 use structopt::StructOpt;
-
-arg_enum! {
-    #[derive(Debug)]
-    pub enum OutputType {
-        CSV,
-        TSV,
-        Fastq
-    }
-}
 
 #[derive(StructOpt, Debug)]
 pub enum Command {
     /// Query the Vault database
     Query {
-        /// Type of output
-        #[structopt(possible_values=&OutputType::variants(), default_value="TSV", case_insensitive=true, short, long)]
-        format: OutputType,
+        /// Extract fastqs
+        #[structopt(short,long, parse(from_os_str))]
+        extract: Option<PathBuf>,
+
+        /// Create samplesheet from results
+        #[structopt(short,long)]
+        samplesheet: Option<PathBuf>,
 
         /// Filter
         #[structopt(long)]
@@ -33,9 +28,13 @@ pub enum Command {
         #[structopt(long)]
         force: bool,
 
-        /// Config file location, tries to locate sequencing runs from here
+        /// Root folder for sequencing runs
         #[structopt(default_value = "/mnt/ngs/01-Rohdaten", long, parse(from_os_str))]
         rundir: PathBuf,
+
+        /// Root folder for Cellsheet/spikeINBC lookup
+        #[structopt(default_value = "/mnt/kaessens-j/L/05-Molekulargenetik/09-NGS/01-Markerscreening", long, parse(from_os_str))]
+        celldir: PathBuf,
     },
 
     /// Re-creates an empty database
