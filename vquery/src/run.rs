@@ -158,14 +158,18 @@ fn assign_fastqs(mut samples: &mut Vec<Sample>, mut fastqs: Vec<String>) -> usiz
 }
 
 impl Run {
+    /// Tries to discover a spikeINBC.(txt|csv) file in a path constructed
+    /// from the base directory, the run date and parts of the run name
     fn find_cellsheet(&mut self, basedir: &Path) -> Option<PathBuf> {
+
         // build path based on date
         let mut cellsheet_dir = PathBuf::from(basedir);
         let (year, month, _) = self.date.as_ymd();
         cellsheet_dir.push(year.to_string());
 
-        // No spikeINBC before 2016. For 2016, this will also not work
-        // but we won't find them there anyway
+        // No spikeINBC before 2016. During 2016, some weirdly formatted files
+        // can be found but not parsed. From 2017 onwards, paths appear to be
+        // stable
         cellsheet_dir.push(match month {
             1 => "01_Januar",
             2 => "02_Feburar",
@@ -182,25 +186,35 @@ impl Run {
             _ => panic!("Bad month number"),
         });
         
-        // Now the run folder. Take the run date as YYYYMMDD and add the M-number and then
-        // have walkdir find the final spikeINBC
+        // Now the run folder. It starts with the run date in YYYYMMDD format (instead of YYMMDD in the run name).
+        // Then, the M number follows and then some more cruft, probably investigator names. Give WalkDir a sensible
+        // prefix and let it find the proper one.
         let run_prefix = String::from("20") + &self.name.split_inclusive("_").collect::<Vec<&str>>()[0..2].concat();
-        debug!("run prefix is {}", run_prefix);
+
+        // Only keep the latest cellsheet if multiple can be found
         let mut latest_cellsheet = Option::<PathBuf>::None;
         let mut latest_date: i32 = 0;
         for entry in WalkDir::new(cellsheet_dir).max_depth(3)
                 .into_iter()
                 .filter_entry(|e| {
                     match e.depth() {
+                        // root node
                         0 => true,
+                        // run folder
                         1 => e.file_name().to_string_lossy().starts_with(&run_prefix),
+                        // some folder starting with "Start_" and an unguessable suffix
                         2 => e.file_name().to_string_lossy().starts_with("Start_"),
+                        // finally the spikeINBC file. 2017-2018 are usually .txt, since 2018 csv.
+                        // Content is the same, it's only the extension.
                         3 => { let n = e.file_name().to_string_lossy(); n.ends_with("spikeINBC.txt") || n.ends_with("spikeINBC.csv") }
+                        // shouldn't come here due to WalkDir max_depth setting
                         _ => panic!("Went too deep into cell sheet discovery"),
                     }
                 })
+                // ignore errors, just keep on looking
                 .filter_map(|e| e.ok()) {
                     
+            // only interested in spikeINBC files on level 3
             if entry.depth() == 3 {
                 let file_name = entry.file_name().to_string_lossy();
                 let parts = file_name.split("_").collect::<Vec<&str>>();
@@ -218,10 +232,13 @@ impl Run {
         latest_cellsheet
     }
 
-    fn parse_cellsheet(&mut self, csheet: &Path) -> Result<(usize)> {
+    /// Parses a given cellsheet and returns the number of samples that could be matched
+    /// against the current run.
+    fn parse_cellsheet(&mut self, csheet: &Path) -> Result<usize> {
         // 1 cell: 6.5 picogram DNA
         // 100 nanogram DNA = ca. 15384.6 cells
-        static CELLS_PER_NG: f32 = 15384.6;
+        // 1 nanogram DNA = ca. 153.846 cells
+        static CELLS_PER_NG: f32 = 153.846;
 
         let mut samplecount = 0;
 
@@ -229,22 +246,28 @@ impl Run {
         for line in std::io::BufReader::new(csheetf).lines() {
             let line = match line {
                 Err(e) =>{
+                    // usually windows-1251 <-> UTF8 encoding issues
                     error!("Cannot parse {}: {}", csheet.display(), e);
                     continue;
                 }
                 Ok(line) => line
             };
             
+            // expect 4 columns
             let parts = line.split(",").collect::<Vec<&str>>();
             if line.len() > 0 && parts.len() != 4 {
                 debug!("{} cellsheet {} has {} columns!?", &self.name, csheet.display(), parts.len());
                 return Err(Box::from("Malformed cellsheet"));
             }
 
+            // skip header
             if parts[0] == "sample_ID" {
                 continue;
             }
 
+            // match cell sheet sample names against known samples
+            // usually chokes on whitespaces, umlauts, missing hyphens in last names, etc
+            // TODO: additionally try matching by dna_nr+primer_set
             let mut candidates: Vec<&mut Sample> = self.samples.iter_mut().filter(|s| s.name == parts[0]).collect();
             if candidates.len() != 1 {
                 debug!("{} cell sheet {} entry {} matches {} known samples", self.name, csheet.display(), parts[0], candidates.len());
@@ -265,6 +288,7 @@ impl Run {
             if let Ok(linebuf) = line {
                 let mut parts: Vec<&str> = linebuf.split(",").collect();
 
+                // part of samplesheet in windows INI style
                 if !data_mode {
                     if parts.len() >= 2 {
                         match parts[0] {
@@ -277,6 +301,7 @@ impl Run {
                             _ => {}
                         }
                     }
+                    // advance to second part, the CSV-like actual sample sheet
                     if parts[0] == "[Data]" {
                         if parts.len() > 10 {
                             warn!(
@@ -286,6 +311,7 @@ impl Run {
                         }
                         data_mode = true;
                     }
+                // CSV-style part
                 } else {
                     if parts[0].to_ascii_lowercase() == "sample_id" {
                         continue;
@@ -377,6 +403,7 @@ impl Run {
                 if let Ok(e) = e {
                     if e.depth() > 1 {
                         let s = e.path().display().to_string();
+                        // cut off the root directory. We only want fastq paths relative to the run root
                         s[path.display().to_string().len() + 1..].to_string()
                     } else {
                         String::from("")

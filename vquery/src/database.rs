@@ -147,7 +147,7 @@ impl Database {
         }
 
         let statement =
-            format!("SELECT sample.id as sample_id FROM sample INNER JOIN fastq ON sample.id=fastq.sample_id WHERE LOWER(CONCAT(dna_nr,filename)) like CONCAT('%', $1::text,'%'){}", filter_sql);
+            format!("SELECT distinct sample.id as sample_id FROM sample INNER JOIN fastq ON sample.id=fastq.sample_id WHERE LOWER(CONCAT(dna_nr,filename)) like CONCAT('%', $1::text,'%'){}", filter_sql);
 
         debug!("Q: {}", &statement);
         let rows = self.client.query(&*statement, &[&query.to_lowercase()])?;
