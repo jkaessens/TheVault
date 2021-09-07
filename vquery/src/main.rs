@@ -1,29 +1,36 @@
-mod config;
-mod database;
-mod run;
-mod runwalker;
-mod sample;
+#[macro_use]
+extern crate diesel;
 
-use crate::database::Database;
-use crate::sample::Sample;
-use rayon::prelude::*;
-use std::collections::HashMap;
-use std::error::Error;
-use std::io::prelude::*;
-use std::io::BufRead;
-use std::path::{Path, PathBuf};
+mod config;
+mod run;
+mod sample;
+mod web;
+mod vaultdb;
+
+
+mod schema;
+mod models;
+
+use std::path::PathBuf;
+use std::{collections::HashMap, error::Error, fs::File, io::BufRead, path::Path};
+use std::io::Write;
+use diesel::{PgConnection, QueryDsl, ExpressionMethods, RunQueryDsl};
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use structopt::StructOpt;
-use std::fs::File;
+
+extern crate log;
 
 #[macro_use]
-extern crate log;
+extern crate rocket;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-fn extract_from_zip(path: &Path, sample: &Sample, targetdir: &Path) -> Result<()> {
+
+fn extract_from_zip(path: &Path, fastqs: &[String],  targetdir: &Path) -> Result<()> {
     let zipfile = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(zipfile)?;
-    for f in &sample.files {
+    for f in fastqs {
         let mut fastq = zip.by_name(f)?;
 
         let target = PathBuf::from(fastq.name());
@@ -45,8 +52,8 @@ fn extract_from_zip(path: &Path, sample: &Sample, targetdir: &Path) -> Result<()
     Ok(())
 }
 
-fn extract_from_dir(path: &Path, sample: &Sample, targetdir: &Path) -> Result<()> {
-    for f in &sample.files {
+fn extract_from_dir(path: &Path, fastqs: &[String], targetdir: &Path) -> Result<()> {
+    for f in fastqs {
         let mut src = path.to_path_buf();
         src.push(f);
         
@@ -58,21 +65,11 @@ fn extract_from_dir(path: &Path, sample: &Sample, targetdir: &Path) -> Result<()
     Ok(())
 }
 
-fn dump_samplesheet(samples: &Vec<(String, Sample)>, targetfile: &Path) -> Result<()> {
-    let mut ssheet = File::create(targetfile)?;
-    
-    write!(ssheet, "sample\trun\tcells\tprimer set\tproject\tLIMS ID\tDNA nr\n")?;
-    for (r, s) in samples {
-        write!(ssheet, "{}\t{}\t{}\t{}\t{}\t{}\t{}\n", s.name, r, s.cells, s.primer_set, s.project, s.lims_id, s.dna_nr)?;
-    }
-
-    Ok(())
-}
-
-fn dump_fastq(db: &mut Database, samples: &Vec<(String, Sample)>, targetdir: &Path) {
+fn dump_fastq(conn: &PgConnection, samples: &HashMap<models::Sample, Vec<String>>, targetdir: &Path) {
+    use crate::schema::run;
 
     // Make a list of paths that correspond to the runs
-    let mut runs: Vec<String> = samples.iter().map(|(run, _)| run.to_owned()).collect();
+    let mut runs: Vec<&str> = samples.iter().map(|(s, _)| s.run.as_str()).collect();
     runs.sort();
     runs.dedup();
 
@@ -83,30 +80,55 @@ fn dump_fastq(db: &mut Database, samples: &Vec<(String, Sample)>, targetdir: &Pa
     );
 
     let mut runpaths: HashMap<String, PathBuf> = HashMap::new();
-    for run in runs.into_iter() {
-        let run = db.get_run(&run, false).unwrap();
-        runpaths.insert(run.name, run.path);
+    for r in runs.into_iter() {
+        let p: String = run::table
+            .select(run::path)
+            .filter(run::name.eq(r))
+            .first(conn)
+            .expect("Could not get run");
+        runpaths.insert(r.to_string(), PathBuf::from(p));
+        
     }
 
-    samples.into_par_iter().for_each(|(runname, sample)| {
-        let runpath = runpaths.get(&*runname).unwrap();
+    samples.into_par_iter().for_each(|(sample, fastqs)| {
+        let runpath = runpaths.get(&sample.run).unwrap();
         if let Some(ext) = runpath.extension() {
             if ext.to_ascii_lowercase() == "zip" {
-                extract_from_zip(runpath, &sample, targetdir).unwrap_or_else(|e| {
+                extract_from_zip(runpath, fastqs, targetdir).unwrap_or_else(|e| {
                     error!("Cannot extract from zip file {}: {}", runpath.display(), e)
                 });
             } else {
                 warn!(
                     "Run path {} has weird extension. Don't know what to do, skipping.",
-                    runname
+                    sample.run
                 );
             }
         } else {
-            extract_from_dir(runpath, &sample, targetdir)
+            extract_from_dir(runpath, fastqs, targetdir)
                 .unwrap_or_else(|e| error!("Cannot copy from run folder: {}", e));
         }
     });
     info!("Done");
+}
+
+
+fn dump_samplesheet(samples: &HashMap<models::Sample, Vec<String>>, targetfile: &Path) -> Result<()> {
+    let mut ssheet = File::create(targetfile)?;
+    
+    write!(ssheet, "sample\trun\tcells\tprimer set\tproject\tLIMS ID\tDNA nr\n")?;
+    for (s, _) in samples {
+        
+        write!(ssheet, "{}\t{}\t{}\t{}\t{}\t{}\t{}\n", 
+            s.name, 
+            s.run, 
+            s.cells.unwrap_or(0), 
+            &s.primer_set.as_ref().unwrap_or(&String::from("")), 
+            s.project, 
+            s.lims_id.unwrap_or(0), 
+            s.dna_nr)?;
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -121,13 +143,15 @@ fn main() -> Result<()> {
         .build_global()?;
 
     match config.cmd {
+        
         config::Command::Query {
             query,
             filter, 
+            limit,
             extract, 
             samplesheet } => {
 
-            let mut db = Database::new(&config.connstr, false)?;
+            // collect queries from either stdin or a positional argument
             let mut queries: Vec<String> = Vec::new();
 
             if &query == "-" {
@@ -139,27 +163,52 @@ fn main() -> Result<()> {
                 queries.push(query);
             }
 
-            let mut candidates: Vec<(String, Sample)> = Vec::new();
+            // Collect filters
+            let mut filters = HashMap::new();
+            for f in filter.into_iter() {
+                let parts = f.split("=").map(|p| p.to_string()).collect::<Vec<_>>();
+                if parts.len() == 2 {
+                    filters.insert(parts[0].to_string(), parts[1].to_string());
+                } else {
+                    error!("Ignoring malformed filter: {}", &f);
+                }
+            }
+
+            // run the queries one after another and append the results to candidate list
+            let conn = vaultdb::establish_connection(&config.connstr);
+            let mut candidates: HashMap<models::Sample, Vec<String>> = HashMap::new();
             for q in queries {
-                let mut these_candidates = db.find_samples(&q, &filter)?;
-                candidates.append(&mut these_candidates);
+                candidates.extend(vaultdb::query(&conn, &q, &filters, limit));
             }
             info!("{} candidates returned.", candidates.len());
             
+            debug!("{:?}", candidates);
+            
+            // some more extras
             if let Some(targetdir) = extract {
-                dump_fastq(&mut db, &candidates, &targetdir);
+                dump_fastq(&conn, &candidates, &targetdir);
             }
-
+            
             if let Some(targetfile) = samplesheet {
                 dump_samplesheet(&candidates, &targetfile)?;
             }
+            
         }
+        
+
         config::Command::Update { force, rundir, celldir } => {
-            let mut db = Database::new(&config.connstr, force)?;
-            db.update(&rundir, &celldir)?;
+            let conn = vaultdb::establish_connection(&config.connstr);
+            if force {
+                info!("Flushing database contents");
+                vaultdb::flush(&conn);
+            }
+            vaultdb::update(&conn, &rundir, &celldir)?
         }
-        config::Command::Initialize => {
-            Database::new(&config.connstr, true)?;
+        
+        config::Command::Web => {
+            let _rocket = web::rocket();
+            //block_on(rocket)
+            
         }
     }
 

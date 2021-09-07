@@ -1,11 +1,13 @@
-use crate::runwalker;
+
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use chrono::Datelike;
 use zip::ZipArchive;
 
+use crate::models;
 use crate::sample::Sample;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -17,7 +19,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(Debug)]
 pub struct Run {
-    pub date: time::Date,
+    pub date: chrono::NaiveDate,
     pub name: String,
     pub path: PathBuf,
     pub samples: Vec<Sample>,
@@ -26,6 +28,19 @@ pub struct Run {
     pub description: String,
     pub chemistry: String,
 }
+
+
+/// Parses a date string from a run name, that typically starts with "YYMMDD"
+fn parse_date(source: &str) -> Result<chrono::NaiveDate> {
+    if source.len() < 6 {
+        return Err(Box::from("Date string too short"));
+    }
+    let year = source[0..2].parse::<i32>()? + 2000;
+    let month = source[2..4].parse::<u32>()?;
+    let day = source[4..6].parse::<u32>()?;
+    Ok(chrono::NaiveDate::from_ymd(year, month, day))
+}
+
 
 fn is_fastq(s: &str) -> bool {
     s.ends_with(".fastq.gz")
@@ -164,7 +179,8 @@ impl Run {
 
         // build path based on date
         let mut cellsheet_dir = PathBuf::from(basedir);
-        let (year, month, _) = self.date.as_ymd();
+        let year = self.date.year();
+        let month = self.date.month();
         cellsheet_dir.push(year.to_string());
 
         // No spikeINBC before 2016. During 2016, some weirdly formatted files
@@ -393,7 +409,7 @@ impl Run {
             .as_os_str()
             .to_string_lossy();
 
-        let run_date = runwalker::parse_date(&run_name);
+        let run_date = parse_date(&run_name);
 
         // make fastq file list
         let walker = walkdir::WalkDir::new(&path).follow_links(true).into_iter();
@@ -446,7 +462,7 @@ impl Run {
         let mut z = ZipArchive::new(File::open(path)?)?;
         let run_name = path.file_stem().unwrap().to_string_lossy();
 
-        let run_date = runwalker::parse_date(&run_name);
+        let run_date = parse_date(&run_name);
 
         let mut r = Run {
             date: run_date?,
@@ -497,6 +513,18 @@ impl Run {
             }
             Ok(r)
         })
+    }
+
+    pub fn to_schema_run(&self) -> models::Run {
+        models::Run {
+             assay: self.assay.clone(),
+            chemistry: self.chemistry.clone(),
+            date: self.date,
+            description: if self.description.is_empty() { None } else { Some(self.description.clone()) },
+            investigator: self.investigator.clone(),
+            name: self.name.clone(),
+            path: self.path.to_str().expect("Could not convert path to string").to_string(),
+        }
     }
 }
 

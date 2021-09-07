@@ -1,0 +1,13 @@
+{{> _header }}
+<table class="table table-striped table-hover">
+<thead>
+    <tr><th>Run</th><th>Date</th><th>Investigator</th><th>Assay</th><th>Description</th><th>Chemistry<th></tr>
+</thead>
+<tbody>
+    {{#each runs}}
+    <tr><td><a href="/run/{{this.name}}">{{this.name}}</a></td><td>{{this.date}}</td><td>{{this.investigator}}</td><td>{{this.assay}}</td><td>{{this.description}}</td><td>{{this.chemistry}}</tr>
+    {{/each}}
+</tbody>
+</table>
+{{> _footer }}
+

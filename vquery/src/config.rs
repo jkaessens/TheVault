@@ -18,6 +18,10 @@ pub enum Command {
         #[structopt(long)]
         filter: Vec<String>,
 
+        /// Limit result count
+        #[structopt(long)]
+        limit: Option<usize>,
+
         /// A full-text search string
         query: String,
     },
@@ -36,9 +40,8 @@ pub enum Command {
         #[structopt(default_value = "/mnt/kaessens-j/L/05-Molekulargenetik/09-NGS/01-Markerscreening", long, parse(from_os_str))]
         celldir: PathBuf,
     },
-
-    /// Re-creates an empty database
-    Initialize,
+    /// Start the Rocket handler
+    Web,
 }
 
 #[derive(StructOpt, Debug)]

@@ -1,0 +1,2 @@
+[global.databases.vault]
+url = "postgresql://postgres:password@localhost/vault"

@@ -8,7 +8,7 @@ edition = "2018"
 [dependencies]
 zip = { version = "0.5", default-features = false, features = ["deflate"] }
 structopt = "0.3"
-postgres = { version = "0.19", features = ["with-time-0_2"]}
+postgres = { version = "0.19", features = ["with-chrono-0_4"]}
 time = "0.2"
 walkdir = "2"
 clap = "2.33"
@@ -17,3 +17,20 @@ log = "0.4.0"
 env_logger = "0.8.4"
 regex = "1.5"
 lazy_static = "1.4"
+rocket = "0.5.0-rc.1"
+diesel = { version = "1.4.4", features = ["postgres", "chrono"] }
+dotenv = "0.15.0"
+chrono = { version = "*", features = ["serde"] }
+futures = "*"
+serde = "*"
+
+
+[dependencies.rocket_sync_db_pools]
+version = "0.1.0-rc.1"
+default-features = false
+features = ["diesel_postgres_pool"]
+
+[dependencies.rocket_dyn_templates]
+version = "0.1.0-rc.1"
+features = ["handlebars", "tera"]
+
