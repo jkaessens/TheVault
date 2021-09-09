@@ -15,7 +15,7 @@ pub struct Run {
     pub path: String,
 }
 
-#[derive(Queryable,QueryableByName,Debug,Serialize, PartialEq, Eq, Hash)]
+#[derive(Queryable,QueryableByName,Debug,Serialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[table_name = "sample"]
 pub struct Sample {
     pub run: String,

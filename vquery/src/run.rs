@@ -176,7 +176,6 @@ impl Run {
     /// Tries to discover a spikeINBC.(txt|csv) file in a path constructed
     /// from the base directory, the run date and parts of the run name
     fn find_cellsheet(&mut self, basedir: &Path) -> Option<PathBuf> {
-
         // build path based on date
         let mut cellsheet_dir = PathBuf::from(basedir);
         let year = self.date.year();
@@ -206,7 +205,6 @@ impl Run {
         // Then, the M number follows and then some more cruft, probably investigator names. Give WalkDir a sensible
         // prefix and let it find the proper one.
         let run_prefix = String::from("20") + &self.name.split_inclusive("_").collect::<Vec<&str>>()[0..2].concat();
-
         // Only keep the latest cellsheet if multiple can be found
         let mut latest_cellsheet = Option::<PathBuf>::None;
         let mut latest_date: i32 = 0;
@@ -288,7 +286,7 @@ impl Run {
             if candidates.len() != 1 {
                 debug!("{} cell sheet {} entry {} matches {} known samples", self.name, csheet.display(), parts[0], candidates.len());
             } else {
-                candidates[0].cells = (parts[1].parse::<f32>().unwrap_or(0.0)/100.0 * CELLS_PER_NG).round() as i32;
+                candidates[0].cells = (parts[1].parse::<f32>().unwrap_or(0.0) * CELLS_PER_NG).round() as i32;
                 samplecount += 1;
             }
         }

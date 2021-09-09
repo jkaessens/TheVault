@@ -95,20 +95,35 @@ pub fn query(conn: &PgConnection, needle: &str, filters: &HashMap<String,String>
 
     let mut filter_sql = String::from("");
     for f in filters.keys() {
-        filter_sql.push_str(&format!(
-            " AND sample.{} ILIKE '{}'",
-            f,
-            filters.get(f).unwrap()
-        ));
-    }
+        match f.as_ref() {
+            "cells<" | "cells>" | "cells" | "lims_id<" | "lims_id>" | "lims_id" => {
+                filter_sql.push_str(&format!(
+                    " AND {}={}",
+                    f,
+                    filters.get(f).unwrap()
+                ));
+            },
+            "run" | "name" | "dna_nr" | "project" | "primer_set" | "filename" => {
+                 filter_sql.push_str(&format!(
+                    " AND {} ILIKE '{}'",
+                    f,
+                    filters.get(f).unwrap()
+                ));
+            },
+            _ => {
+                warn!("Ignoring unsupported filter: {}", f);
+            }
 
+        }
+    }
+    
     if let Some(count) = limit {
         filter_sql.push_str(&format!(" LIMIT {}", count));
     }
 
     let statement =
         format!("SELECT sample.*,fastq.* AS sample_id FROM sample INNER JOIN fastq ON sample.id=fastq.sample_id WHERE fastq.filename ILIKE $1 {}", filter_sql);
-    
+    debug!("Q: {}", statement);
     let results: Vec<(models::Sample,models::Fastq)> = diesel::sql_query(&statement)
         .bind::<Text,_>(needle)
         .load(conn)
@@ -122,5 +137,6 @@ pub fn query(conn: &PgConnection, needle: &str, filters: &HashMap<String,String>
             result.insert(sample, vec![fastq.filename]);
         }
     }
+
     result
 }
