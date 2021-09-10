@@ -6,6 +6,8 @@ use diesel::ExpressionMethods;
 use rocket_dyn_templates::Template;
 use rocket::fs::relative;
 use rocket::form::FromForm;
+use rocket_dyn_templates::handlebars::Handlebars;
+use rocket_dyn_templates::handlebars::no_escape;
 
 use crate::models::*;
 use crate::schema::*;
@@ -83,10 +85,21 @@ async fn run_query(conn: VaultDatabase, filter: Option<String>, limit: Option<us
     if let Some(filter_str) = filter.as_ref() {
         for f in filter_str.split_whitespace() {
             let parts: Vec<&str> = f.split("=").collect();
-            if parts.len() != 2 {
-                warnings.push(format!("Ignoring filter '{}' which must be in the form KEY=VALUE.", &f));
-            } else {
-                filters.insert(parts[0].to_string(), parts[1].to_string());
+            match parts.len() {
+                1 => {
+                    warnings.push(format!("Invalid filter <span class=\"font-monospace\">{}</span> rewritten as <span class=\"font-monospace\">filename=%{}%</span>. Please consult the syntax help.", parts[0], parts[0]));
+                    filters.insert(String::from("filename"), format!("%{}%", parts[0]));
+                }
+                2 => {
+                    if !["run","name","dna_nr","project","primer_set","filename","cells","cells<","cells>","lims_id","lims_id<","lims_id>"].contains(&parts[0]) {
+                        warnings.push(format!("Ignoring unknown filter column <span class=\"font-monospace\">{}</span>", parts[0]));
+                    } else {
+                        filters.insert(parts[0].to_string(), parts[1].to_string());
+                    }
+                }
+                _ => {
+                    warnings.push(String::from("Invalid filter string. Only zero or more <span class=\"font-monospace\">key=value</span> pairs are allowed. Please consult the syntax help."));
+                }
             }
         }
     }
@@ -111,12 +124,16 @@ async fn run_query(conn: VaultDatabase, filter: Option<String>, limit: Option<us
     })
 }
 
+pub fn customize_hbs(hbs: &mut Handlebars) {
+    hbs.register_escape_fn(no_escape);
+}
+
 #[rocket::main]
 pub async fn rocket ()  {
     let figment = rocket::Config::figment();
     if let Err(e) = rocket::custom(figment)
         .attach(VaultDatabase::fairing())
-        .attach(Template::fairing())
+        .attach(Template::custom(|engines| { customize_hbs(&mut engines.handlebars)} ))
         .mount("/static", FileServer::from(relative!("static")))
         .mount("/", routes![run_query, get_run])
         .launch()

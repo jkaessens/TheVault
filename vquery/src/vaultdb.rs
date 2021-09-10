@@ -122,7 +122,7 @@ pub fn query(conn: &PgConnection, needle: &str, filters: &HashMap<String,String>
     }
 
     let statement =
-        format!("SELECT sample.*,fastq.* AS sample_id FROM sample INNER JOIN fastq ON sample.id=fastq.sample_id WHERE fastq.filename ILIKE $1 {}", filter_sql);
+        format!("SELECT DISTINCT ON (sample.id) sample.*,fastq.* AS sample_id FROM sample INNER JOIN fastq ON sample.id=fastq.sample_id WHERE fastq.filename ILIKE $1 {}", filter_sql);
     debug!("Q: {}", statement);
     let results: Vec<(models::Sample,models::Fastq)> = diesel::sql_query(&statement)
         .bind::<Text,_>(needle)

@@ -32,5 +32,5 @@ features = ["diesel_postgres_pool"]
 
 [dependencies.rocket_dyn_templates]
 version = "0.1.0-rc.1"
-features = ["handlebars", "tera"]
+features = ["handlebars"]
 

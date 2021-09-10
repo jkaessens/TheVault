@@ -13,7 +13,7 @@
 Available column filters:
 <ul>
 <li>run, name, dna_nr, project, primer_set, filename: can be used with wildcard operator '%'
-<li>cells, lims_id: can be used with numeric operators '>=', '<=' and '='. Note that samples without a known cell count or LIMS id will never be considered if the respective filter is used, i.e. <span class="font-monospace">cells>=0</span> will not show samples without a known cell count</li>
+<li>cells, lims_id: can be used with numeric operators '&gt;=', '&lt;=' and '='. Note that samples without a known cell count or LIMS id will never be considered if the respective filter is used, i.e. <span class="font-monospace">cells>=0</span> will not show samples without a known cell count</li>
 </ul>
 
 Examples:
@@ -36,17 +36,18 @@ Examples:
 <form method="get" class="row">
     <div class="col-9">
         <div class="form-floating">
-        <input type="text" autofocus class="form-control" placeholder="Filters" name="filter" id="filter" {{#if filters}}value="{{filters}}"{{/if}}>
+        <input class="form-control" placeholder="Filters" name="filter" id="filter" {{#if filters}}value="{{filters}}"{{/if}}>
         <label for="filter">Filters: run, name, dna_nr, project, primer_set, filename, cells, lims_id</label>
         </div>
     </div>
     <div class="col-2">
         <div class="form-floating">
         <select class="form-select" id="limit" name="limit">
-        <option value="100" {{#if (eq limit 100)}}selected{{/if}}>50</option>
-        <option value="200" {{#if (eq limit 200)}}selected{{/if}}>100</option>
-        <option value="500" {{#if (eq limit 500)}}selected{{/if}}>250</option>
-        <option value="1000" {{#if (eq limit 1000)}}selected{{/if}}>500</option>
+        <option value="50" {{#if (eq limit 50)}}selected{{/if}}>50</option>
+        <option value="100" {{#if (eq limit 100)}}selected{{/if}}>100</option>
+        <option value="200" {{#if (eq limit 200)}}selected{{/if}}>200</option>
+        <option value="500" {{#if (eq limit 500)}}selected{{/if}}>500</option>
+        <option value="1000" {{#if (eq limit 1000)}}selected{{/if}}>1000</option>
         </select>
         <label for="limit">Limit</label>
         </div>
@@ -55,21 +56,27 @@ Examples:
     <button type="submit" class="btn btn-primary h-100">Run!</button>
     </div>
 </form>
-
 {{#if warnings}}
+<div class="row">
+<div class="alert alert-warning col" role="alert">
 Warnings:
 <ul>
 {{#each warnings}}
 <li>{{this}}</li>
 {{/each}}
 </ul>
+</div>
+</div>
 {{/if}}
 
-{{ count }} sample(s) shown. {{#if (eq count limit) }}Limit hit. Consider increasing the limit or narrowing the filters!{{/if}}
-
+<div class="row">
+<div class="alert alert-info" role="alert">
+{{ count }} sample(s) shown. {{#if (eq count limit) }}<em>Limit hit. Consider increasing the limit or narrowing the filters!</em>{{/if}}
+</div>
+</div>
 <table class="table table-striped table-hover table-sm">
 <thead>
-    <tr><th></th><th>Run</th><th>Sample</th><th>DNA Nr.</th><th>LIMS ID</th><th>Primer Set</th><th>Project</th><th>Cells</th></tr>
+    <tr><th>🛒</th><th>Run</th><th>Sample</th><th>DNA Nr.</th><th>LIMS ID</th><th>Primer Set</th><th>Project</th><th>Cells</th></tr>
 </thead>
 <tbody>
     {{#each samples}}
@@ -87,5 +94,23 @@ Warnings:
 </tbody>
 </table>
 
+<script type="text/javascript">
+// Basic cross browser addEvent
+function addEvent(elem, event, fn){
+if(elem.addEventListener){
+  elem.addEventListener(event, fn, false);
+}else{
+  elem.attachEvent("on" + event,
+  function(){ return(fn.call(elem, window.event)); });
+}}
+var element = document.getElementById('filter');
+
+addEvent(element,'focus',function(){
+  var that = this;
+  setTimeout(function(){ that.selectionStart = that.selectionEnd = 10000; }, 0);
+});
+
+element.focus();
+</script>
 {{> _footer }}
 
