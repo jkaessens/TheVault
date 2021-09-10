@@ -10,6 +10,16 @@
         </h2>
         <div id="collapseOne" class="accordion-collapse collapse" data-bs-parent="#queryaccordion">
             <div class="accordion-body">
+By default, all samples are shown. The list can be narrowed down by supplying one or more filter criteria. These
+criteria limit the output based on a certain pattern that matches a specific column. For example, if the filter 
+<span class="font-monospace">project=MS_ALL</span> is specified, only those samples where the project is 'MS_ALL'
+will be shown. If multiple filters are specified, they should be separated by whitespaces, i.e.
+<pre>project=MS_ALL name=Aqua</pre>
+Most filter columns support the wildcard operator '%', which means 'zero or more other characters may appear here'.
+The filter <span class="monospace">run=21%01_%</span> will look out for runs starting with '21', then allowing an arbitraty
+number of characters followed by '01_'. This would match
+<pre>210401_M12345_0000000-ABCDE</pre> but also <pre>210404_M00001_000000-ABCDE</pre>
+
 Available column filters:
 <ul>
 <li>run, name, dna_nr, project, primer_set, filename: can be used with wildcard operator '%'
@@ -22,10 +32,12 @@ Examples:
     <dd><span class="font-monospace">run=21%</span></dd>
     <dt>List all samples from project MS_ALL with primer set TRG whose DNA-Nr ends with 2</dt>
     <dd><span class="font-monospace">run=21% project=MS_ALL primer_set=TRG dna_nr=%2</span></dd>
-    <dt>List all samples from project MS_ALL with at least 15000 samples</dt>
+    <dt>List all samples from project MS_ALL with at least 15000 cells</dt>
     <dd><span class="font-monospace">project=MS_ALL cells>=15000</dd>
     <dt>List all samples from June 2021 with a known LIMS ID<dt>
     <dd><span class="font-monospace">run=2106% lims_id>=0</dd>
+    <dt>List all samples from the MS_ALL project from position S36</dt>
+    <dd><span class="font-monospace">project=MS_ALL filename=%_S36_%</dd>
 </dl>
             </div>
         </div>

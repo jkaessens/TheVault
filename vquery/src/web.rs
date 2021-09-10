@@ -12,7 +12,7 @@ use rocket_dyn_templates::handlebars::no_escape;
 use crate::models::*;
 use crate::schema::*;
 
-
+use crate::sample::normalize_dna_nr;
 use crate::vaultdb::VaultDatabase;
 use std::collections::HashMap;
 
@@ -80,8 +80,6 @@ async fn run_query(conn: VaultDatabase, filter: Option<String>, limit: Option<us
     let mut filters: HashMap<String, String> = HashMap::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    debug!("filter: {:?} limit: {:?}", filter, limit);
-
     if let Some(filter_str) = filter.as_ref() {
         for f in filter_str.split_whitespace() {
             let parts: Vec<&str> = f.split("=").collect();
@@ -94,7 +92,12 @@ async fn run_query(conn: VaultDatabase, filter: Option<String>, limit: Option<us
                     if !["run","name","dna_nr","project","primer_set","filename","cells","cells<","cells>","lims_id","lims_id<","lims_id>"].contains(&parts[0]) {
                         warnings.push(format!("Ignoring unknown filter column <span class=\"font-monospace\">{}</span>", parts[0]));
                     } else {
-                        filters.insert(parts[0].to_string(), parts[1].to_string());
+                        if parts[0] == "dna_nr" {
+                            let norm_dna_nr = normalize_dna_nr(parts[1]);
+                            filters.insert(parts[0].to_string(), norm_dna_nr);
+                        } else {
+                            filters.insert(parts[0].to_string(), parts[1].to_string());
+                        }
                     }
                 }
                 _ => {

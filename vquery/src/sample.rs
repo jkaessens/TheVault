@@ -13,17 +13,23 @@ pub struct Sample {
     pub cells: i32,
 }
 
-fn normalize_dna_nr(dnanr: &str) -> String {
-        let parts: Vec<&str> = dnanr.split("-").collect();
-        if parts.len() != 2 {
-            return dnanr.to_string();
-        }
-        format!(
-            "{:02}-{:05}",
-            parts[0].parse::<u32>().unwrap(),
-            parts[1].parse::<u32>().unwrap()
-        )
+pub(crate) fn normalize_dna_nr(dnanr: &str) -> String {
+    let no_d = if dnanr.starts_with("D-") {
+        &dnanr[2..]
+    } else {
+        dnanr
+    };
+
+    let parts: Vec<&str> = no_d.split("-").collect();
+    if parts.len() != 2 {
+        return dnanr.to_string();
     }
+    format!(
+        "{:02}-{:05}",
+        parts[0].parse::<u32>().unwrap(),
+        parts[1].parse::<u32>().unwrap()
+    )
+}
 
 impl Sample {
     pub fn to_schema_sample(&self, run: &str) -> models::NewSample {
