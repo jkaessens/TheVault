@@ -14,13 +14,8 @@ pub struct Sample {
 }
 
 pub(crate) fn normalize_dna_nr(dnanr: &str) -> String {
-    let no_d = if dnanr.starts_with("D-") {
-        &dnanr[2..]
-    } else {
-        dnanr
-    };
-
-    let parts: Vec<&str> = no_d.split("-").collect();
+    
+    let parts: Vec<&str> = dnanr.split("-").collect();
     if parts.len() != 2 {
         return dnanr.to_string();
     }
