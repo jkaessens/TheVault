@@ -72,7 +72,12 @@ for (1..$num_runs) {
 
         print "INSERT INTO sample (run,name,dna_nr,project,lims_id,primer_set,id,cells) VALUES ";
         print "('$run_name', '$name', '$dna_nr', ";
-        print_sometimes $project, 0;
+        if(rand(100)>$undef_rate) {
+            print "'$project'";
+        } else {
+            print "''";
+        }
+        #        print_sometimes $project, 0;
         print ",";
         print_sometimes $lims_id, 1;
         print ",'$primer_set',$id,";
@@ -83,7 +88,7 @@ for (1..$num_runs) {
             my $filename = "/mnt/foo/bar/" . random_string(8) . "/"
                 . random_value(4) . "_" . $name . "_" . $primer_set
                 . "_S" . random_value(2) . "_L001_R1_001.fastq.gz";
-            print "INSERT INTO fastq (sample_id, filename VALUES ";
+            print "INSERT INTO fastq (sample_id, filename) VALUES ";
             print "($id, '$filename');\n";
         }
     }
