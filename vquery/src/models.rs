@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::schema::*;
 
 use serde::Serialize;
@@ -47,3 +49,19 @@ pub struct Fastq {
     pub sample_id: i32
 }
 
+impl Sample {
+    pub fn to_model(&self) -> crate::sample::Sample {
+        let mut s = crate::sample::Sample {
+            cells: self.cells.unwrap_or(0),
+            dna_nr: self.dna_nr.clone(),
+            files: Vec::new(),
+            extra: HashMap::new(),
+            lims_id: self.lims_id.unwrap_or(0),
+            name: self.name.clone(),
+            primer_set: self.primer_set.as_ref().unwrap_or(&String::from("")).clone(),
+            project: self.project.clone()
+        };
+        s.extra.insert("run".to_string(), self.run.clone());
+        s
+    }
+}

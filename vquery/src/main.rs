@@ -112,20 +112,46 @@ fn dump_fastq(conn: &PgConnection, samples: &HashMap<models::Sample, Vec<String>
 }
 
 
-fn dump_samplesheet(samples: &HashMap<models::Sample, Vec<String>>, targetfile: &Path) -> Result<()> {
+fn dump_samplesheet(samples: &HashMap<models::Sample, Vec<String>>, targetfile: &Path, import_str: Option<String>) -> Result<()> {
     let mut ssheet = File::create(targetfile)?;
+
+    let mut samples: Vec<sample::Sample> = samples.keys().map(|s| s.to_model()).collect();
     
-    write!(ssheet, "sample\trun\tcells\tprimer set\tproject\tLIMS ID\tDNA nr\n")?;
-    for (s, _) in samples {
+    if let Some(import) = import_str {
+        sample::import_columns(&mut samples, &import)?;
+    }
+
+    let extra_cols = if samples.len() > 0 {
+        samples[0].extra.keys().map(|s| s.clone()).collect()
+    } else {
+        Vec::new()
+    };
+
+    write!(ssheet, "sample\trun\tcells\tprimer set\tproject\tLIMS ID\tDNA nr")?;
+    for col in &extra_cols {
+        if col != "run" {
+            write!(ssheet, "\t{}", col)?;
+        }
+    }
+    write!(ssheet, "\n")?;
+
+    for s in samples {
         
-        write!(ssheet, "{}\t{}\t{}\t{}\t{}\t{}\t{}\n", 
+        write!(ssheet, "{}\t{}\t{}\t{}\t{}\t{}\t{}", 
             s.name, 
-            s.run, 
-            s.cells.unwrap_or(0), 
-            &s.primer_set.as_ref().unwrap_or(&String::from("")), 
+            s.extra.get("run").unwrap_or(&String::from("")), 
+            s.cells, 
+            s.primer_set, 
             s.project, 
-            s.lims_id.unwrap_or(0), 
+            s.lims_id, 
             s.dna_nr)?;
+
+        for col in &extra_cols {
+            if col != "run" {
+                write!(ssheet, "\t{}", s.extra.get(col).unwrap_or(&String::from("notfound?")))?;
+            }
+        }
+        write!(ssheet, "\n")?;
     }
 
     Ok(())
@@ -149,7 +175,7 @@ fn main() -> Result<()> {
             filter, 
             limit,
             extract, 
-            samplesheet } => {
+            samplesheet, import } => {
 
             // collect queries from either stdin or a positional argument
             let mut queries: Vec<String> = Vec::new();
@@ -190,7 +216,7 @@ fn main() -> Result<()> {
             }
             
             if let Some(targetfile) = samplesheet {
-                dump_samplesheet(&candidates, &targetfile)?;
+                dump_samplesheet(&candidates, &targetfile, import)?;
             }
             
         }
