@@ -236,19 +236,26 @@ fn main() -> Result<()> {
                 Err(e) => { error!("Could not parse samplesheet: {}", e); panic!("Could not parse samplesheet!"); },
             };
 
-            let overrides = overrides.map(|s| {
-                s.split(",")
-                 .map(|t|t.to_string())
-                 .collect::<Vec<String>>()
+            // parse comma-separated overrides string into string vector
+            let overrides = overrides.map(|s| { 
+                s.split(",").map(|p| p.to_string()).collect::<Vec<String>>()
             }).unwrap_or_default();
 
-            if let Some(samplesheet) = samplesheet {
-                let mut f = File::create(&samplesheet)?;
-                f.write_all(ss.write_csv("\t", &overrides).as_bytes())?;
+
+            if let Some(samplesheet) = &samplesheet {
+                let mut f = File::create(samplesheet)?;
+                info!("Writing sample sheet to {}...", samplesheet.display());
+                f.write_all(ss.write_csv("\t", &overrides.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()).as_bytes())?;
             }
 
-            if let Some(extract) = extract {
-                todo!()
+            if let Some(extract) = &extract {
+                info!("Extracting FASTQs of {} samples, please wait...", ss.entries.len());
+                ss.extract_fastqs(&conn, extract)?;
+                info!("Done.");
+            }
+
+            if extract.is_none() && samplesheet.is_none() {
+                warn!("Importing doesn't do anything if you don't specify what to do afterwards. Please use --samplesheet or --extract or both.");
             }
 
         }
@@ -264,8 +271,6 @@ fn main() -> Result<()> {
         
         config::Command::Web => {
             let _rocket = web::rocket();
-            //block_on(rocket)
-            
         }
     }
 

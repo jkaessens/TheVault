@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::{Path, PathBuf}};
 
 use calamine::{Reader, Xlsx, open_workbook};
 use diesel::{PgConnection, QueryDsl, RunQueryDsl, ExpressionMethods};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::error::Error;
 use crate::{models, vaultdb::MatchStatus};
 
@@ -16,7 +17,7 @@ pub struct SampleSheet {
 #[derive(Debug,Default)]
 pub struct SampleSheetEntry {
     pub model: models::Sample,
-    pub extra_cols: HashMap<String, String>,
+    pub extra_cols: HashMap<String, String>
 }
 
 
@@ -24,25 +25,32 @@ impl SampleSheetEntry {
     fn new() -> Self {
         SampleSheetEntry {
             model: models::Sample::default(), 
-            extra_cols: HashMap::new() }
+            extra_cols: HashMap::new()
+        }
     }
     pub fn from_model(s: &models::Sample) -> SampleSheetEntry {
         SampleSheetEntry {
             model: s.clone(),
-            extra_cols: HashMap::new(),
+            extra_cols: HashMap::new()
         }
     }
 
-    pub fn get_run_path(&self, db: &PgConnection) -> Result<PathBuf> {
+    pub fn run_path(&self, db: &PgConnection) -> Result<PathBuf> {
         use crate::schema::run;
         let p: String = run::table.select(run::path).filter(run::name.eq(&self.model.run)).get_result(db)?;
         Ok(PathBuf::from(p))
     }
 
-    pub fn get_fastq_paths(&self, db: &PgConnection) -> Result<Vec<String>> {
+    pub fn fastq_paths(&self, db: &PgConnection) -> Result<Vec<String>> {
         use crate::schema::fastq;
-        let paths:Vec<String> = fastq::table.select(fastq::filename).filter(fastq::sample_id.eq(self.model.id)).load(db)?;
-        Ok(paths)
+        Ok(fastq::table.select(fastq::filename).filter(fastq::sample_id.eq(self.model.id)).load(db)?)
+    }
+
+    // generate a short but unique string representation of the run
+    // to keep samples with same characteristics in different runs apart
+    fn get_unique_run_id(&self) -> String {
+        let parts: Vec<&str> = self.model.run.split("-").collect();
+        format!("{}-{}", parts[0], parts[parts.len()-1])
     }
 
     pub fn from_row(row: &[&str], header: &[&str]) -> SampleSheetEntry {
@@ -78,29 +86,44 @@ impl From<models::Sample> for SampleSheetEntry {
     fn from(s: models::Sample) -> Self {
         SampleSheetEntry {
             model: s,
-            extra_cols: HashMap::new(),
+            extra_cols: HashMap::new()
         }
     }
 }
 
-fn normalize_dna_nr(dnanr: &str) -> Option<String> {
-    let dnanr = if dnanr.starts_with("D-") {
-        &dnanr[2..]
-    } else {
-        dnanr
-    };
-    
-    let parts: Vec<&str> = dnanr.split("-").collect();
-    if parts.len() != 2 {
-        return None;
+fn extract_from_zip(path: &Path, fastqs: &[String],  targetdir: &Path, sample_prefix: Option<String>) -> Result<()> {
+    let zipfile = std::fs::File::open(path)?;
+    let mut zip = zip::ZipArchive::new(zipfile)?;
+    let prefix = sample_prefix.unwrap_or(String::from(""));
+
+    for f in fastqs {
+        let mut fastq = zip.by_name(f)?;
+
+        let target = PathBuf::from(fastq.name());
+        let mut local_path = PathBuf::from(targetdir);
+        
+        local_path.push(prefix.clone() + &target.file_name().unwrap().to_string_lossy().to_string());
+        
+        let mut targetfile = std::fs::File::create(local_path)?;
+        std::io::copy(&mut fastq, &mut targetfile)?;
     }
-    Some(format!(
-        "{:02}-{:05}",
-        parts[0].parse::<u32>().unwrap(),
-        parts[1].parse::<u32>().unwrap()
-    ))
+    Ok(())
 }
 
+fn extract_from_dir(path: &Path, fastqs: &[String], targetdir: &Path, sample_prefix: Option<String>) -> Result<()> {
+    let prefix = sample_prefix.unwrap_or(String::from(""));
+
+    for f in fastqs {
+        let mut src = path.to_path_buf();
+        src.push(f);
+        
+        let mut target = PathBuf::from(targetdir);
+        target.push(prefix.clone() + &PathBuf::from(f).file_name().unwrap().to_string_lossy().to_string());
+
+        std::fs::copy(&src, &target)?;
+    }
+    Ok(())
+}
 
 impl SampleSheet {
     pub fn new() -> Self {
@@ -156,7 +179,56 @@ impl SampleSheet {
         Ok(result)
     }
 
-    pub fn write_csv(&self, separator: &str, overrides: &[String]) -> String {
+    pub fn has_multiple_runs(&self) -> bool {
+        self.entries.iter().map(|e| (e.model.run.clone(), true)).collect::<HashMap<String,bool>>().into_keys().count() > 1
+    }
+
+    pub fn extract_fastqs(&self, db: &PgConnection, targetpath: &Path) -> Result<()> {
+        // Make a list of paths that correspond to the runs so we can aggregate the ZIP extractions by ZIP file/run path
+        let mut runs: Vec<&str> = self.entries.iter().map( |e| e.model.run.as_ref()).collect();
+        runs.sort();
+        runs.dedup();
+
+        // Discover actual run path for runs
+        let runpaths: HashMap<String,String> = { 
+            use crate::schema::run;
+            run::table
+                .select((run::name, run::path))
+                .filter(run::name.eq_any(&runs))
+                .load(db)
+                .expect("Could not get run")
+        }.into_iter().collect();
+
+        // Collect run paths before we go into parallel extraction
+        let files: Vec<Vec<String>> = self.entries.iter().map(|e| e.fastq_paths(db)).collect::<Result<_>>()?;
+ 
+        // Extract FASTQs from runs sample-wise in parallel, adding a sample prefix on-the-fly
+        self.entries.par_iter().enumerate().for_each(|(idx, entry)| {
+            let runpath = PathBuf::from(runpaths.get(&entry.model.run).unwrap());
+            let fastqs = &files[idx];
+            let prefix = if runs.len() > 1 { Some( entry.get_unique_run_id()) } else { None };
+
+            if let Some(ext) = runpath.extension() {
+                if ext.to_ascii_lowercase() == "zip" {
+                    extract_from_zip(&runpath, fastqs.as_ref(), targetpath, prefix).unwrap_or_else(|e| {
+                        error!("Cannot extract from zip file {}: {}", runpath.display(), e)
+                    });
+                } else {
+                    warn!(
+                        "Run path {} has weird extension. Don't know what to do, skipping.",
+                        entry.model.run
+                    );
+                }
+            } else {
+                extract_from_dir(&runpath, fastqs.as_ref(), targetpath, prefix)
+                    .unwrap_or_else(|e| error!("Cannot copy from run folder: {}", e));
+            }
+        });
+        Ok(())
+    }
+
+
+    pub fn write_csv<T: AsRef<str> + PartialEq> (&self, separator: &str, overrides: &[T]) -> String {
         let basic_header = vec!["Sample", "run", "DNA nr", "primer set", "project", "LIMS ID", "cells"];
         
         // extra_cols hashmap is not necessarily fully populated for every sample, so check all
@@ -179,15 +251,23 @@ impl SampleSheet {
         }
         csv += "\n";
 
+        let has_multiple_runs = self.has_multiple_runs();
+
         for e in &self.entries {
             // write basic data points
             for (col_idx, col) in basic_header.iter().enumerate() {
                 let last = col_idx+1 == basic_header.len();
-                if overrides.contains(&String::from(*col)) {
+                if overrides.iter().any(|x| &x.as_ref() == col) {
                     csv += e.extra_cols.get(*col).unwrap_or(&String::from(""));
                 } else {
                     match *col {
-                        "Sample" => { csv += &e.model.name; },
+                        "Sample" => { 
+                            if has_multiple_runs {
+                                csv += &format!("{}-{}", e.get_unique_run_id(), e.model.name);
+                            } else {
+                                csv += &e.model.name; 
+                            }
+                        },
                         "run" => { csv += &e.model.run; },
                         "DNA nr" => { csv += &e.model.dna_nr; },
                         "primer set" => { csv += e.model.primer_set.as_ref().unwrap_or(&String::from("")); },

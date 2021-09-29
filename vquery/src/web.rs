@@ -1,7 +1,4 @@
 
-use calamine::Reader;
-use calamine::Xlsx;
-use calamine::open_workbook;
 use rocket::form::Form;
 use rocket::fs::FileServer;
 use rocket::fs::TempFile;
@@ -18,7 +15,6 @@ use diesel::ExpressionMethods;
 
 use crate::models::*;
 
-use crate::sample;
 use crate::vaultdb::VaultDatabase;
 use std::collections::HashMap;
 
@@ -107,14 +103,6 @@ struct QueryResult<'a> {
     samplesheet_id: Option<i32>,
 }
 
-fn load_samplesheet(f: &mut TempFile<'_>, samples: &[crate::sample::Sample], cols: &[&str]) -> i32 {
-
-    unimplemented!()
-}
-
-fn update_samples(conn: &mut VaultDatabase, id: i32, samples: &mut [Sample]) {
-
-}
 
 #[route(POST, uri = "/checkout", data = "<cart>")]
 async fn checkout(mut conn: VaultDatabase, mut cart: Form<QueryResult<'_>>, cookies: &CookieJar<'_>) -> Template {
@@ -151,7 +139,7 @@ async fn checkout(mut conn: VaultDatabase, mut cart: Form<QueryResult<'_>>, cook
     //     0
     // };
 
-    update_samples(&mut conn, samplesheet_id, &mut samples);
+    //update_samples(&mut conn, samplesheet_id, &mut samples);
 
     Template::render("checkout", context!{
         samples,
