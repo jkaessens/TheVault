@@ -1,0 +1,38 @@
+{{> _header }}
+<h1>Vault Checkout</h1>
+<div class="row">
+<h2>Sample Sheet</h2>
+<table class="table table-striped table-hover table-sm">
+<thead>
+    <tr><th>Run</th><th>Sample</th><th>DNA Nr.</th><th>LIMS ID</th><th>Primer Set</th><th>Project</th><th>Cells</th></tr>
+</thead>
+<tbody>
+    {{#each samples}}
+    <tr>
+        <td>{{this.run}}</td>
+        <td>{{this.name}}</td>
+        <td>{{this.dna_nr}}</td>
+        <td>{{this.lims_id}}</td>
+        <td>{{this.primer_set}}</td>
+        <td>{{this.project}}</td>
+        <td>{{this.cells}}</td>
+    </tr>
+    {{/each}}
+</tbody>
+</table>
+<form method="post" action="checkout" enctype="multipart/form-data">
+<div class="form-floating row">
+    <label for="import_cols" class="form-label">Comma-separated list of columns to import</label>
+    <input class="form-control" type="text" name="import_cols" id="import_cols">
+</div>
+<div class="form-floating row">
+<label for="import_ssheet" class="form-label">Upload sample sheet (xlsx)</pre></label>
+<input class="form-control" type="file" name="import_ssheet" id="import_ssheet">
+</div>
+<input type="hidden" name="basket_id" value="{{samplesheet_id}}">
+<button type="submit" class="btn btn-primary" name="refresh">Update</button>
+</form>
+
+
+{{> _footer }}
+

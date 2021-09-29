@@ -30,6 +30,14 @@ table! {
     }
 }
 
+table! {
+    samplesheet (id) {
+        id -> Int4,
+        created -> Timestamp,
+        basket -> Text,
+    }
+}
+
 joinable!(fastq -> sample (sample_id));
 joinable!(sample -> run (run));
 
@@ -37,4 +45,5 @@ allow_tables_to_appear_in_same_query!(
     fastq,
     run,
     sample,
+    samplesheet,
 );

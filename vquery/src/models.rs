@@ -17,7 +17,7 @@ pub struct Run {
     pub path: String,
 }
 
-#[derive(Queryable,QueryableByName,Debug,Serialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Queryable,QueryableByName,Debug,Serialize, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Default)]
 #[table_name = "sample"]
 pub struct Sample {
     pub run: String,
@@ -52,6 +52,7 @@ pub struct Fastq {
 impl Sample {
     pub fn to_model(&self) -> crate::sample::Sample {
         let mut s = crate::sample::Sample {
+            id: Some(self.id),
             cells: self.cells.unwrap_or(0),
             dna_nr: self.dna_nr.clone(),
             files: Vec::new(),

@@ -12,6 +12,7 @@ use rocket_sync_db_pools::database;
 
 use walkdir::WalkDir;
 
+use crate::sample::{is_dna_nr, normalize_dna_nr};
 use crate::{models, run};
 
 
@@ -139,4 +140,70 @@ pub fn query(conn: &PgConnection, needle: &str, filters: &HashMap<String,String>
     }
 
     result
+}
+
+
+pub enum MatchStatus {
+    None(String),
+    One(models::Sample),
+    Multiple(Vec<models::Sample>),
+}
+
+pub fn match_samples(db: &PgConnection, lims_id: Option<i64>, dna_nr: Option<String>, primer_set: Option<String>, name: Option<String>, run: String) -> Result<MatchStatus, Box<dyn std::error::Error>> {
+    use crate::schema::sample;
+    let candidates: Vec<models::Sample> = sample::table.filter(sample::run.eq(&run)).load(db)?;
+    if candidates.is_empty() {
+        return Ok(MatchStatus::None(format!("No samples in specified run {}", run)));
+    }
+
+    debug!("match_samples: lims_id {:?} dna_nr {:?} primer_set {:?} name: {:?} run {}, run candidates: {}", lims_id, dna_nr, primer_set, name, run, candidates.len());
+    // filter by LIMS ID
+    let candidates = if let Some(lims_id) = lims_id {
+        candidates.into_iter().filter(|s| s.lims_id == Some(lims_id)).collect()
+    } else {
+        candidates
+    };
+    
+    if candidates.is_empty() {
+        return Err(Box::from("No candidates left after LIMS filter"));
+    }
+
+    // filter by DNA nr
+    let candidates = if let Some(dna_nr) = dna_nr {
+        if is_dna_nr(&dna_nr) {
+            candidates.into_iter().filter(|s| s.dna_nr == normalize_dna_nr(&dna_nr) ).collect()
+        } else {
+            candidates
+        }
+    } else {
+        candidates
+    };
+    if candidates.is_empty() {
+        return Ok(MatchStatus::None(String::from("Sample has passed LIMS filter but not dna_nr filter")));
+    }
+
+    // filter by primer set (DB contains short version ("FR1") whereas sample sheets/queries often contain the full name "IGH-FR1" or so)
+    let candidates = if let Some(primer_set) = primer_set {
+        
+        candidates.into_iter()
+                .filter(|s| if let Some(s_primer_set) = &s.primer_set { primer_set.contains(s_primer_set) } else { false } )
+                .collect()
+    } else {
+        candidates
+    };
+    if candidates.is_empty() {
+        return Ok(MatchStatus::None(String::from("Candidates passed LIMS and DNA filter but not primer_set filter")));
+    }
+    // filter by name
+    let mut candidates = if let Some(name) = name {
+        candidates.into_iter().filter(|s| s.name.contains(&name) || name.contains(&s.name)).collect()
+    } else {
+        candidates
+    };
+
+    match candidates.len() {
+        0 => Ok(MatchStatus::None(String::from("Candidates passed LIMS, DNA and primer_set filters but not name filter"))),
+        1 => Ok(MatchStatus::One(candidates.remove(0))),
+        _ => Ok(MatchStatus::Multiple(candidates))
+    }
 }

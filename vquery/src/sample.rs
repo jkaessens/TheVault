@@ -8,6 +8,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Sample {
+    pub id: Option<i32>,
     pub name: String,
     pub dna_nr: String,
     pub project: String,
@@ -20,9 +21,12 @@ pub struct Sample {
     pub extra: HashMap<String,String>,
 }
 
+
+
 // Convert DNA numbers to XX-XXXXX format, will be filled up with zeros if necessary
 pub(crate) fn normalize_dna_nr(dnanr: &str) -> String {
     
+    let dnanr = if dnanr.starts_with("D-") { &dnanr[2..] } else { dnanr };
     let parts: Vec<&str> = dnanr.split("-").collect();
     if parts.len() != 2 {
         return dnanr.to_string();
@@ -51,7 +55,7 @@ impl Sample {
 }
 
 // Check if given string seems to be a valid DNA number (cheap check, not 100%)
-fn is_dna_nr(dna_nr: &str) -> bool {
+pub(crate) fn is_dna_nr(dna_nr: &str) -> bool {
     if dna_nr.len() < 8 {   // XX-XXXXX
         return false;
     }
@@ -71,14 +75,7 @@ fn is_dna_nr(dna_nr: &str) -> bool {
 // import_str format: "col1[,col2[...,coln]]=filename.xlsx"
 // where col1..coln are column headers and filename.xlsx is a 
 // sample sheet in XLSX format (no XLS or TSV or CSV supported)
-pub fn import_columns(samples: &mut [Sample], import_str: &str) -> Result<()> {
-    // parse import string
-    let parts: Vec<&str> = import_str.split("=").collect();
-    if parts.len() != 2 {
-        return Err(Box::from("Import Syntax: --import col1,col2,col3=filename.xlsx"));
-    }
-    let filename = parts[1];
-    let cols: Vec<&str> = parts[0].split(",").collect();
+pub fn import_columns(samples: &mut [Sample], filename: &str, cols: &[&str]) -> Result<()> {
 
     // open Excel workbook
     let mut ss: Xlsx<_> = open_workbook(filename)?;

@@ -377,6 +377,7 @@ impl Run {
 
                     parse_samplename(&mut s);
                     if s.name.len() > 0 {
+                        s.files = Vec::new();
                         self.samples.push(s);
                     }
                 }

@@ -6,7 +6,7 @@ mod run;
 mod sample;
 mod web;
 mod vaultdb;
-
+mod samplesheet;
 
 mod schema;
 mod models;
@@ -118,7 +118,15 @@ fn dump_samplesheet(samples: &HashMap<models::Sample, Vec<String>>, targetfile: 
     let mut samples: Vec<sample::Sample> = samples.keys().map(|s| s.to_model()).collect();
     
     if let Some(import) = import_str {
-        sample::import_columns(&mut samples, &import)?;
+        // parse import string
+        let parts: Vec<&str> = import.split("=").collect();
+        if parts.len() != 2 {
+            return Err(Box::from("Import Syntax: --import col1,col2,col3=filename.xlsx"));
+        }
+        let filename = parts[1];
+        let cols: Vec<&str> = parts[0].split(",").collect();
+
+        sample::import_columns(&mut samples, filename,  &cols)?;
     }
 
     let extra_cols = if samples.len() > 0 {
@@ -220,7 +228,30 @@ fn main() -> Result<()> {
             }
             
         }
-        
+
+        config::Command::Import { extract, samplesheet, overrides, xlsx } => {
+            let mut conn = vaultdb::establish_connection(&config.connstr);
+            let ss = match crate::samplesheet::SampleSheet::from_xlsx(xlsx.to_str().unwrap(), &mut conn) {
+                Ok(s) => s,
+                Err(e) => { error!("Could not parse samplesheet: {}", e); panic!("Could not parse samplesheet!"); },
+            };
+
+            let overrides = overrides.map(|s| {
+                s.split(",")
+                 .map(|t|t.to_string())
+                 .collect::<Vec<String>>()
+            }).unwrap_or_default();
+
+            if let Some(samplesheet) = samplesheet {
+                let mut f = File::create(&samplesheet)?;
+                f.write_all(ss.write_csv("\t", &overrides).as_bytes())?;
+            }
+
+            if let Some(extract) = extract {
+                todo!()
+            }
+
+        }
 
         config::Command::Update { force, rundir, celldir } => {
             let conn = vaultdb::establish_connection(&config.connstr);

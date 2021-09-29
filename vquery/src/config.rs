@@ -30,6 +30,23 @@ pub enum Command {
         query: String,
     },
 
+    /// Import a samplesheet and match samples against the database
+    Import {
+        /// Extract fastqs
+        #[structopt(short,long, parse(from_os_str))]
+        extract: Option<PathBuf>,
+
+        /// Create samplesheet from results
+        #[structopt(short,long)]
+        samplesheet: Option<PathBuf>,
+
+        /// Override DB entries with these samplesheet columns (comma-separated)
+        #[structopt(long)]
+        overrides: Option<String>,
+
+        xlsx: PathBuf,
+    },
+
     /// Update the database
     Update {
         /// Force full refresh instead of picking up where it left last time
