@@ -14,10 +14,6 @@ pub enum Command {
         #[structopt(short,long)]
         samplesheet: Option<PathBuf>,
 
-        /// Pick up columns from file
-        #[structopt(long, requires="samplesheet")]
-        import: Option<String>,
-
         /// Filter
         #[structopt(long)]
         filter: Vec<String>,

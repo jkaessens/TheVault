@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::schema::*;
 
 use serde::Serialize;
@@ -30,7 +28,7 @@ pub struct Sample {
     pub cells: Option<i32>,
 }
 
-#[derive(Insertable,Debug,Serialize)]
+#[derive(Insertable,Debug,Serialize,Clone,Default)]
 #[table_name="sample"]
 pub struct NewSample {
     pub run: String,
@@ -49,20 +47,16 @@ pub struct Fastq {
     pub sample_id: i32
 }
 
-impl Sample {
-    pub fn to_model(&self) -> crate::sample::Sample {
-        let mut s = crate::sample::Sample {
-            id: Some(self.id),
-            cells: self.cells.unwrap_or(0),
-            dna_nr: self.dna_nr.clone(),
-            files: Vec::new(),
-            extra: HashMap::new(),
-            lims_id: self.lims_id.unwrap_or(0),
-            name: self.name.clone(),
-            primer_set: self.primer_set.as_ref().unwrap_or(&String::from("")).clone(),
-            project: self.project.clone()
-        };
-        s.extra.insert("run".to_string(), self.run.clone());
-        s
+impl NewSample {
+    pub fn from_sample(s: &Sample) -> NewSample {
+        NewSample {
+            run: s.run.clone(),
+            name: s.name.clone(),
+            dna_nr: s.dna_nr.clone(),
+            project: s.project.clone(),
+            lims_id: s.lims_id,
+            primer_set: s.primer_set.clone(),
+            cells: s.cells
+        }
     }
 }

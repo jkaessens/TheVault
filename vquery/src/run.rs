@@ -8,7 +8,7 @@ use chrono::Datelike;
 use zip::ZipArchive;
 
 use crate::models;
-use crate::sample::Sample;
+use crate::models::NewSample;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::io::BufReader;
@@ -22,7 +22,7 @@ pub struct Run {
     pub date: chrono::NaiveDate,
     pub name: String,
     pub path: PathBuf,
-    pub samples: Vec<Sample>,
+    pub samples: Vec<(models::NewSample, Vec<String>)>,
     pub investigator: String,
     pub assay: String,
     pub description: String,
@@ -49,7 +49,7 @@ fn is_fastq(s: &str) -> bool {
         && !s.contains("Archiv_")
 }
 
-fn parse_from_fastq(samples: &mut Vec<Sample>, fastq: &str) {
+fn parse_from_fastq(samples: &mut Vec<(NewSample, Vec<String>)>, fastq: &str, run_name: &str) {
     lazy_static! {
         static ref RE_NAME: Regex = Regex::new(r"(?P<name>.*?)_S\d+_.*\.fastq\.gz$").unwrap();
     }
@@ -65,40 +65,43 @@ fn parse_from_fastq(samples: &mut Vec<Sample>, fastq: &str) {
         dir_name
     };
 
-    let mut s = if let Some(captures) = RE_NAME.captures(&file_name) {
-        let mut s = Sample::default();
-        s.name = captures.name("name").unwrap().as_str().to_string();
+    let s = if let Some(captures) = RE_NAME.captures(&file_name) {
+        let mut s = NewSample {
+            name: captures.name("name").unwrap().as_str().to_string(),
+            project,
+            .. Default::default()
+        };
         parse_samplename(&mut s);
-        s.project = project;
         s
     } else {
-        let mut s = Sample::default();
-        s.name = String::from("Unknown");
-        s.project = project;
-        s
+        NewSample {
+            name: String::from("Unknown"),
+            run: run_name.to_string(),
+            project,
+            .. Default::default()
+        }
     };
 
     // merge if there is already such a sample
     let mut found = false;
-    for sample in samples.iter_mut() {
+    for (sample, files) in samples.iter_mut() {
         if sample.name == s.name
             && sample.dna_nr == s.dna_nr
             && sample.primer_set == s.primer_set
             && sample.project == s.project
         {
-            sample.files.push(fastq.to_string());
+            files.push(fastq.to_string());
             found = true;
             break;
         }
     }
 
     if !found {
-        s.files.push(fastq.to_string());
-        samples.push(s);
+        samples.push((s, vec![fastq.to_string()]));
     }
 }
 
-fn parse_samplename(s: &mut Sample) {
+fn parse_samplename(s: &mut models::NewSample) {
     lazy_static! {
         static ref RE_DNA: Regex = Regex::new(r"(?:D-)?(?P<dnanr>\d\d-\d{3,})").unwrap();
         static ref RE_PRIMER: Regex =
@@ -111,21 +114,21 @@ fn parse_samplename(s: &mut Sample) {
     }
 
     if let Some(captures) = RE_PRIMER.captures(&oldname) {
-        s.primer_set = captures.name("primer").unwrap().as_str().to_string();
+        s.primer_set = Some(captures.name("primer").unwrap().as_str().to_string());
     } else {
         //debug!("No capture for {}", oldname);
     }
 }
 
-fn match_fastq(sample: &Sample, fastq: &str) -> bool {
-    if sample.dna_nr.len() > 0 {
-        if sample.primer_set.len() > 0 {
-            return fastq.contains(&sample.dna_nr) && fastq.contains(&sample.primer_set);
+fn match_fastq(sample: &NewSample, fastq: &str) -> bool {
+    if !sample.dna_nr.is_empty() {
+        if let Some(primer_set) = sample.primer_set.as_ref() {
+            fastq.contains(&sample.dna_nr) && fastq.contains(primer_set)
         } else {
-            return fastq.contains(&sample.dna_nr);
+            fastq.contains(&sample.dna_nr)
         }
     } else {
-        return fastq.contains(&sample.name);
+        fastq.contains(&sample.name)
     }
 }
 
@@ -134,42 +137,42 @@ fn match_fastq(sample: &Sample, fastq: &str) -> bool {
 /// sort sample names by length (longest first), so we get the best matches
 /// before one of the shorter prefixes could match, and then remove the matched
 /// fastqs from the fastq file list
-fn assign_fastqs(mut samples: &mut Vec<Sample>, mut fastqs: Vec<String>) -> usize {
-    samples.sort_unstable_by_key(|s| s.name.len());
+fn assign_fastqs(mut samples: &mut Vec<(NewSample, Vec<String>)>, mut fastqs: Vec<String>, run_name: &str) -> usize {
+    samples.sort_unstable_by_key(|(s,_)| s.name.len());
     samples.reverse();
 
     // match FASTQs by what we got from the sample sheet
-    for s in samples.iter_mut() {
+    for (s, files) in samples.iter_mut() {
         // find fastqs that match the sample name and/or DNA number
+        #[allow(clippy::needless_collect)] // silence a false positive warning
         let myfastqs: Vec<(usize, String)> = fastqs
             .iter()
             .enumerate()
-            .filter(|(_, f)| {
-                let b = match_fastq(&s, &f);
-                //debug!("{} -> {}: {}", &s.name, &f, b);
-                b
-            })
+            .filter(|(_, f)| match_fastq(s, f))
             .map(|(i, f)| (i, f.to_string()))
             .collect();
 
         // reset fastq in list to not shift indices around, and add to sample
         for (idx, file) in myfastqs.into_iter() {
             fastqs[idx].clear();
-            if file.len() == 0 {
+            if file.is_empty() {
                 error!("Trying to assign empty filename to sample {:?}", s);
             }
-            s.files.push(file);
+            files.push(file);
         }
     }
 
     // Create new samples, if necessary, based on what we can parse from the remaining
     // FASTQ filenames
+    if !fastqs.is_empty() {
+        debug!("Recovering {} samples from unmatched FASTQs", fastqs.len());
+    }
     fastqs
         .into_iter()
         .filter(|f| !f.is_empty())
-        .for_each(|f| parse_from_fastq(&mut samples, &f));
+        .for_each(|f| parse_from_fastq(&mut samples, &f, run_name));
 
-    return 0;
+    0
 }
 
 impl Run {
@@ -231,7 +234,7 @@ impl Run {
             // only interested in spikeINBC files on level 3
             if entry.depth() == 3 {
                 let file_name = entry.file_name().to_string_lossy();
-                let parts = file_name.split("_").collect::<Vec<&str>>();
+                let parts = file_name.split('_').collect::<Vec<&str>>();
                 if parts.len() == 1 && latest_date == 0{
                     latest_cellsheet = Some(entry.into_path());
                 } else if parts.len() == 2 {
@@ -268,8 +271,8 @@ impl Run {
             };
             
             // expect 4 columns
-            let parts = line.split(",").collect::<Vec<&str>>();
-            if line.len() > 0 && parts.len() != 4 {
+            let parts = line.split(',').collect::<Vec<&str>>();
+            if !line.is_empty() && parts.len() != 4 {
                 debug!("{} cellsheet {} has {} columns!?", &self.name, csheet.display(), parts.len());
                 return Err(Box::from("Malformed cellsheet"));
             }
@@ -282,11 +285,14 @@ impl Run {
             // match cell sheet sample names against known samples
             // usually chokes on whitespaces, umlauts, missing hyphens in last names, etc
             // TODO: additionally try matching by dna_nr+primer_set
-            let mut candidates: Vec<&mut Sample> = self.samples.iter_mut().filter(|s| s.name == parts[0]).collect();
+            let mut candidates: Vec<&mut models::NewSample> = self.samples.iter_mut().filter(|(s,_)| s.name == parts[0]).map(|(a,_)| a).collect();
             if candidates.len() != 1 {
                 debug!("{} cell sheet {} entry {} matches {} known samples", self.name, csheet.display(), parts[0], candidates.len());
             } else {
-                candidates[0].cells = (parts[1].parse::<f32>().unwrap_or(0.0) * CELLS_PER_NG).round() as i32;
+                candidates[0].cells = parts[1]
+                    .parse::<f32>()
+                    .map(|f| (f * CELLS_PER_NG).round() as i32)
+                    .ok();
                 samplecount += 1;
             }
         }
@@ -294,98 +300,100 @@ impl Run {
     }
 
     /// Parses the run's SampleSheet.csv for auxiliary run information
-    fn parse_samplesheet<R: Read>(&mut self, r: R, fastqs: Vec<String>) -> Result<()> {
+    fn parse_samplesheet<R: Read>(&mut self, r: R, fastqs: Vec<String>, run_name: &str) -> Result<()> {
         let b = BufReader::new(r);
         let mut data_mode = false;
 
-        for line in b.lines() {
-            if let Ok(linebuf) = line {
-                let mut parts: Vec<&str> = linebuf.split(",").collect();
+        for linebuf in b.lines().flatten() {
 
-                // part of samplesheet in windows INI style
-                if !data_mode {
-                    if parts.len() >= 2 {
-                        match parts[0] {
-                            "Investigator Name" => {
-                                self.investigator = parts[1].to_owned().to_string()
-                            }
-                            "Assay" => self.assay = parts[1].to_owned().to_string(),
-                            "Description" => self.description = parts[1].to_owned().to_string(),
-                            "Chemistry" => self.chemistry = parts[1].to_owned().to_string(),
-                            _ => {}
+            let mut parts: Vec<&str> = linebuf.split(',').collect();
+
+            // part of samplesheet in windows INI style
+            if !data_mode {
+                if parts.len() >= 2 {
+                    match parts[0] {
+                        "Investigator Name" => {
+                            self.investigator = parts[1].to_owned().to_string()
                         }
+                        "Assay" => self.assay = parts[1].to_owned().to_string(),
+                        "Description" => self.description = parts[1].to_owned().to_string(),
+                        "Chemistry" => self.chemistry = parts[1].to_owned().to_string(),
+                        _ => {}
                     }
-                    // advance to second part, the CSV-like actual sample sheet
-                    if parts[0] == "[Data]" {
-                        if parts.len() > 10 {
-                            warn!(
-                                "{}: More than 10 colums, will ignore everything after column 10",
-                                self.name
-                            );
-                        }
-                        data_mode = true;
-                    }
-                // CSV-style part
-                } else {
-                    if parts[0].to_ascii_lowercase() == "sample_id" {
-                        continue;
-                    }
-                    if parts.len() < 2 {
-                        continue;
-                    }
-                    let mut s: Sample = Sample::default();
+                }
+                // advance to second part, the CSV-like actual sample sheet
+                if parts[0] == "[Data]" {
                     if parts.len() > 10 {
-                        parts.resize(10, "");
+                        warn!(
+                            "{}: More than 10 colums, will ignore everything after column 10",
+                            self.name
+                        );
                     }
-                    match parts.len() {
-                        10 => {
-                            s.project = parts[8].to_string();
-                            s.name = parts[0].to_string();
+                    data_mode = true;
+                }
+            // CSV-style part
+            } else {
+                if parts[0].to_ascii_lowercase() == "sample_id" {
+                    continue;
+                }
+                if parts.len() < 2 {
+                    continue;
+                }
+                let mut s: models::NewSample = Default::default();
+                if parts.len() > 10 {
+                    parts.resize(10, "");
+                }
+                match parts.len() {
+                    10 => {
+                        s.project = parts[8].to_string();
+                        s.name = parts[0].to_string();
 
-                            // if it parses as unsigned number and it's positive, it might be a
-                            // LIMS id.
-                            if let Ok(id) = parts[9].parse::<i64>() {
-                                if id > 0 {
-                                    s.lims_id = id;
-                                }
+                        // if it parses as unsigned number and it's positive, it might be a
+                        // LIMS id.
+                        if let Ok(id) = parts[9].parse::<i64>() {
+                            if id > 0 {
+                                s.lims_id = Some(id);
+                            } else {
+                                s.lims_id = None;
                             }
                         }
-                        9 => {
-                            s.project = parts[8].to_string();
-                            s.name = parts[0].to_string();
-                        }
-                        7 => {
-                            s.project = parts[5].to_string();
-                            s.name = parts[0].to_string();
-                        }
-                        6 => {
-                            s.project = parts[4].to_string();
-                            s.name = parts[0].to_string();
-                        }
-                        _ => {
-                            error!(
-                                "{}: Expected 10, 9, 7 or 6 columns. Got {} columns: {:?}",
-                                self.name,
-                                parts.len(),
-                                parts
-                            );
-                            return Err(Box::from(
-                                "Expected 10 or 6 columns in [Data] section of sample sheet",
-                            ));
-                        }
                     }
+                    9 => {
+                        s.project = parts[8].to_string();
+                        s.name = parts[0].to_string();
+                    }
+                    7 => {
+                        s.project = parts[5].to_string();
+                        s.name = parts[0].to_string();
+                    }
+                    6 => {
+                        s.project = parts[4].to_string();
+                        s.name = parts[0].to_string();
+                    }
+                    _ => {
+                        error!(
+                            "{}: Expected 10, 9, 7 or 6 columns. Got {} columns: {:?}",
+                            self.name,
+                            parts.len(),
+                            parts
+                        );
+                        return Err(Box::from(
+                            "Expected 10 or 6 columns in [Data] section of sample sheet",
+                        ));
+                    }
+                }
 
-                    parse_samplename(&mut s);
-                    if s.name.len() > 0 {
-                        s.files = Vec::new();
-                        self.samples.push(s);
-                    }
+                parse_samplename(&mut s);
+                s.run = run_name.to_string();
+                if !s.name.is_empty() {
+                    self.samples.push( (s, Vec::new()) );
                 }
             }
         }
+        
 
         let orig_num = fastqs.len();
-        let num = assign_fastqs(&mut self.samples, fastqs);
+        let num = assign_fastqs(&mut self.samples, fastqs, run_name);
         if num > 0 {
             warn!(
                 "{}: {} of {} fastqs were not assigned to samples",
@@ -393,7 +401,7 @@ impl Run {
             );
         }
 
-        if self.samples.len() == 0 {
+        if self.samples.is_empty() {
             warn!("{}: Sample sheet for resulted in 0 samples", self.name);
         }
         Ok(())
@@ -429,7 +437,7 @@ impl Run {
             })
             .filter(|e| is_fastq(e))
             .collect();
-        if fastqs.len() == 0 {
+        if fastqs.is_empty() {
             error!("No fastqs for {}?", run_name);
         }
 
@@ -448,7 +456,7 @@ impl Run {
         ss.push("SampleSheet.csv");
         let f = File::open(ss);
         if let Ok(mut ssheet) = f {
-            r.parse_samplesheet(&mut ssheet, fastqs)?;
+            r.parse_samplesheet(&mut ssheet, fastqs, &run_name)?;
         } else {
             warn!("{}: No SampleSheet.csv found, skipping!", run_name);
         }
@@ -481,7 +489,7 @@ impl Run {
             .collect();
 
         if let Ok(mut ssheet) = z.by_name(&format!("{}/SampleSheet.csv", run_name)) {
-            r.parse_samplesheet(&mut ssheet, fastqs)?;
+            r.parse_samplesheet(&mut ssheet, fastqs, &run_name)?;
         } else {
             warn!("{}: No SampleSheet.csv found, skipping!", run_name);
         }
@@ -500,7 +508,7 @@ impl Run {
         };
 
         
-        run.and_then(|mut r| {
+        run.map(|mut r| {
             if let Some(csheet) = r.find_cellsheet(cellsheetdir) {
                 if let Err(e) = r.parse_cellsheet(&csheet) {
                     warn!("{}: Found a cell sheet but could not parse it: {}", r.name, e);
@@ -510,7 +518,7 @@ impl Run {
             } else {
                 debug!("{}: No cell sheet found", r.name);
             }
-            Ok(r)
+            r
         })
     }
 

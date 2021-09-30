@@ -22,20 +22,8 @@ pub struct SampleSheetEntry {
 
 
 impl SampleSheetEntry {
-    fn new() -> Self {
-        SampleSheetEntry {
-            model: models::Sample::default(), 
-            extra_cols: HashMap::new()
-        }
-    }
-    pub fn from_model(s: &models::Sample) -> SampleSheetEntry {
-        SampleSheetEntry {
-            model: s.clone(),
-            extra_cols: HashMap::new()
-        }
-    }
 
-    pub fn run_path(&self, db: &PgConnection) -> Result<PathBuf> {
+    pub fn _run_path(&self, db: &PgConnection) -> Result<PathBuf> {
         use crate::schema::run;
         let p: String = run::table.select(run::path).filter(run::name.eq(&self.model.run)).get_result(db)?;
         Ok(PathBuf::from(p))
@@ -49,36 +37,9 @@ impl SampleSheetEntry {
     // generate a short but unique string representation of the run
     // to keep samples with same characteristics in different runs apart
     fn get_unique_run_id(&self) -> String {
-        let parts: Vec<&str> = self.model.run.split("-").collect();
-        format!("{}-{}", parts[0], parts[parts.len()-1])
-    }
-
-    pub fn from_row(row: &[&str], header: &[&str]) -> SampleSheetEntry {
-        let mut sse = SampleSheetEntry::default();
-        for (idx, col) in header.into_iter().enumerate() {
-            match *col {
-                "Sample" => { sse.model.name = row[idx].to_string() },
-                "DNA nr" => { sse.model.dna_nr = row[idx].to_string() },
-                "LIMS ID" => { sse.model.lims_id = match row[idx].to_string().parse::<i64>() {
-                    Ok(0) => None,
-                    Ok(s) => Some(s),
-                    Err(_) => None,
-                }},
-                "project" => { sse.model.project = row[idx].to_string() },
-                "primer_set" => { sse.model.primer_set = match row[idx] {
-                    "" => None,
-                    s => Some(s.to_string()),
-                }},
-                "run" => { sse.model.run = row[idx].to_string() },
-                "cells" => { 
-                    sse.model.cells = row[idx].to_string().parse::<i32>().ok()
-                },
-                key@_ => {
-                    sse.extra_cols.insert(key.to_string(), row[idx].to_string());
-                }
-            }
-        }
-        unimplemented!()
+        let underscore_parts: Vec<&str> = self.model.run.split('_').collect();
+        let dash_parts: Vec<&str> = self.model.run.split('-').collect();
+        format!("{}-{}", underscore_parts[0], dash_parts[dash_parts.len()-1])
     }
 }
 
@@ -91,10 +52,18 @@ impl From<models::Sample> for SampleSheetEntry {
     }
 }
 
+impl From<Vec<models::Sample>> for SampleSheet {
+    fn from(ss: Vec<models::Sample>) -> Self {
+        SampleSheet {
+            entries: ss.into_iter().map(|s| s.into()).collect()
+        }
+    }
+}
+
 fn extract_from_zip(path: &Path, fastqs: &[String],  targetdir: &Path, sample_prefix: Option<String>) -> Result<()> {
     let zipfile = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(zipfile)?;
-    let prefix = sample_prefix.unwrap_or(String::from(""));
+    let prefix = sample_prefix.unwrap_or_else(|| String::from(""));
 
     for f in fastqs {
         let mut fastq = zip.by_name(f)?;
@@ -111,7 +80,7 @@ fn extract_from_zip(path: &Path, fastqs: &[String],  targetdir: &Path, sample_pr
 }
 
 fn extract_from_dir(path: &Path, fastqs: &[String], targetdir: &Path, sample_prefix: Option<String>) -> Result<()> {
-    let prefix = sample_prefix.unwrap_or(String::from(""));
+    let prefix = sample_prefix.unwrap_or_else(|| String::from(""));
 
     for f in fastqs {
         let mut src = path.to_path_buf();
@@ -132,28 +101,18 @@ impl SampleSheet {
         }
     }
 
-    pub fn add(&mut self, s: models::Sample) {
-        self.entries.push(s.into());
-    }
-
-    pub fn from_models(ss: &[&models::Sample]) -> Self {
-        SampleSheet {
-            entries: ss.iter().map(|s| SampleSheetEntry::from_model(s)).collect(),
-        }
-    }
-
     pub fn from_xlsx(xlsx: &str, db: &mut PgConnection) -> Result<Self> {
         // open Excel workbook
         let mut ss: Xlsx<_> = open_workbook(xlsx)?;
         let sheetname = ss.sheet_names()[0].clone();
         let sheet = ss.worksheet_range(&sheetname).unwrap()?;
 
-        let header_row: Vec<String> = sheet.rows().next().unwrap().into_iter().map(|d| d.to_string()).collect();
+        let header_row: Vec<String> = sheet.rows().next().unwrap().iter().map(|d| d.to_string()).collect();
         let col_dna_nr = header_row.iter().position(|c| *c == "DNA nr");
         let col_lims_id = header_row.iter().position(|c| *c == "LIMS ID");
         let col_sample = header_row.iter().position(|c| *c == "Sample");
         let col_primer_set = header_row.iter().position(|c| *c == "primer set");
-        let col_run = header_row.iter().position(|c| *c == "run").ok_or(Box::<dyn Error>::from("Could not find required column 'run'"))?;
+        let col_run = header_row.iter().position(|c| *c == "run").ok_or_else(|| Box::<dyn Error>::from("Could not find required column 'run'"))?;
 
         let mut result = SampleSheet::new();
         for (row_idx, row) in sheet.rows().skip(1).enumerate() {
@@ -186,7 +145,7 @@ impl SampleSheet {
     pub fn extract_fastqs(&self, db: &PgConnection, targetpath: &Path) -> Result<()> {
         // Make a list of paths that correspond to the runs so we can aggregate the ZIP extractions by ZIP file/run path
         let mut runs: Vec<&str> = self.entries.iter().map( |e| e.model.run.as_ref()).collect();
-        runs.sort();
+        runs.sort_unstable();
         runs.dedup();
 
         // Discover actual run path for runs
@@ -206,7 +165,7 @@ impl SampleSheet {
         self.entries.par_iter().enumerate().for_each(|(idx, entry)| {
             let runpath = PathBuf::from(runpaths.get(&entry.model.run).unwrap());
             let fastqs = &files[idx];
-            let prefix = if runs.len() > 1 { Some( entry.get_unique_run_id()) } else { None };
+            let prefix = if runs.len() > 1 { Some( format!("{}-", entry.get_unique_run_id()) ) } else { None };
 
             if let Some(ext) = runpath.extension() {
                 if ext.to_ascii_lowercase() == "zip" {
@@ -245,7 +204,7 @@ impl SampleSheet {
 
         // write header
         let mut csv = basic_header.join(separator);
-        if all_sans_basic.len() > 0 {
+        if !all_sans_basic.is_empty() {
             csv += separator;
             csv += &all_sans_basic.join(separator);
         }
@@ -272,7 +231,7 @@ impl SampleSheet {
                         "DNA nr" => { csv += &e.model.dna_nr; },
                         "primer set" => { csv += e.model.primer_set.as_ref().unwrap_or(&String::from("")); },
                         "project" => { csv += &e.model.project; },
-                        "LIMS ID" => { csv += &e.model.lims_id.map(|i| i.to_string()).unwrap_or(String::from("")); },
+                        "LIMS ID" => { csv += &e.model.lims_id.map(|i| i.to_string()).unwrap_or_else(|| String::from("")); },
                         "cells" => { 
                             if let Some(cells) = e.model.cells.as_ref() {
                                 csv += &cells.to_string()
@@ -281,7 +240,7 @@ impl SampleSheet {
                             }
                             
                         },
-                        s@_ => { error!("Unknown header: {}", s); panic!("Matching unknown basic header?!") },
+                        s=> { error!("Unknown header: {}", s); panic!("Matching unknown basic header?!") },
                     }
                 };
                 if !last {

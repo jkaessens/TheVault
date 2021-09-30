@@ -3,8 +3,8 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 
-use diesel::pg::PgConnection;
-use diesel::prelude::*;
+use diesel::pg::{Pg, PgConnection};
+use diesel::{debug_query, prelude::*};
 
 use diesel::sql_types::Text;
 use rayon::prelude::*;
@@ -62,28 +62,34 @@ pub fn update(conn: &PgConnection, rundir: &Path, celldir: &Path) -> Result<(), 
     // feed into database
     conn.transaction::<_, diesel::result::Error, _>(|| {
         for r in runs.into_iter() {
-            let samples = &r.samples;
-            // Run is still a bit special and needs conversion
             let new_run = r.to_schema_run();
+            let mut samples = r.samples;
+            // Run is still a bit special and needs conversion
+            
             debug!("Add run {}", &r.name);
-            diesel::insert_into(crate::schema::run::table)
-                .values(&new_run)
-                .execute(conn).expect("Could not insert run");
+            let run_query = diesel::insert_into(crate::schema::run::table)
+                .values(&new_run);
 
-            let schema_samples: Vec<models::NewSample> = samples.iter().map(|old_s| old_s.to_schema_sample(&r.name)).collect();
-            let sample_ids: Vec<i32> = diesel::insert_into(crate::schema::sample::table)
-                .values(schema_samples)
-                .returning(crate::schema::sample::id)
-                .get_results(conn)
+            run_query
+                .execute(conn).expect("Could not insert run");
+            
+            let sample_models = samples.iter_mut().map(|(a,_)| {a.run = new_run.name.clone(); &*a}).collect::<Vec<_>>();
+
+            let sample_ids_query = diesel::insert_into(crate::schema::sample::table)
+                .values(sample_models)
+                .returning(crate::schema::sample::id);
+ 
+            let sample_ids: Vec<i32> = sample_ids_query.get_results(conn)
                 .expect("Could not insert samples");
 
             for (sample_idx, sample_id) in sample_ids.into_iter().enumerate() {
-                let fastqs: Vec<models::Fastq> = samples[sample_idx].files.iter().map(|f| models::Fastq {filename: f.to_string(), sample_id }).collect();
+                let fastqs: Vec<models::Fastq> = samples[sample_idx].1.iter().map(|f| models::Fastq {filename: f.to_string(), sample_id }).collect();
                 diesel::insert_into(crate::schema::fastq::table)
                     .values(fastqs)
                     .execute(conn)
                     .expect("Could not insert fastqs");
             }
+            
         }
         Ok(())
     })?;

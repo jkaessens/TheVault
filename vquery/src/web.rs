@@ -57,7 +57,7 @@ macro_rules! context {
 fn parse_filters(filter_str: &str, warnings: &mut Vec<String>) -> HashMap<String,String> {
     let mut filters = HashMap::new();
     for f in filter_str.split_whitespace() {
-        let parts: Vec<&str> = f.split("=").collect();
+        let parts: Vec<&str> = f.split('=').collect();
         match parts.len() {
             1 => {
                 warnings.push(format!("Invalid filter <span class=\"font-monospace\">{}</span> rewritten as <span class=\"font-monospace\">filename=%{}%</span>. Please consult the syntax help.", parts[0], parts[0]));
@@ -66,13 +66,11 @@ fn parse_filters(filter_str: &str, warnings: &mut Vec<String>) -> HashMap<String
             2 => {
                 if !["run","name","dna_nr","project","primer_set","filename","cells","cells<","cells>","lims_id","lims_id<","lims_id>"].contains(&parts[0]) {
                     warnings.push(format!("Ignoring unknown filter column <span class=\"font-monospace\">{}</span>", parts[0]));
+                } else if parts[0] == "dna_nr" {
+                    let norm_dna_nr = parts[1].replace("D-", "");
+                    filters.insert(parts[0].to_string(), norm_dna_nr);
                 } else {
-                    if parts[0] == "dna_nr" {
-                        let norm_dna_nr = parts[1].replace("D-", "");
-                        filters.insert(parts[0].to_string(), norm_dna_nr);
-                    } else {
-                        filters.insert(parts[0].to_string(), parts[1].to_string());
-                    }
+                    filters.insert(parts[0].to_string(), parts[1].to_string());
                 }
             }
             _ => {
@@ -105,14 +103,14 @@ struct QueryResult<'a> {
 
 
 #[route(POST, uri = "/checkout", data = "<cart>")]
-async fn checkout(mut conn: VaultDatabase, mut cart: Form<QueryResult<'_>>, cookies: &CookieJar<'_>) -> Template {
+async fn checkout(conn: VaultDatabase, cart: Form<QueryResult<'_>>, cookies: &CookieJar<'_>) -> Template {
 
     let mut selected_samples: Vec<i32> = Vec::new();
     if let Some(ss) = &cart.selected_samples {
         selected_samples = ss.keys().filter_map(|k| k.parse::<i32>().ok()).collect();
     }
     if let Some(c) = cookies.get("selected_samples") {
-        selected_samples.append(&mut c.value().split(",").filter_map(|k| k.parse::<i32>().ok()).collect::<Vec<i32>>());
+        selected_samples.append(&mut c.value().split(',').filter_map(|k| k.parse::<i32>().ok()).collect::<Vec<i32>>());
     }
     selected_samples.sort_unstable();
     selected_samples.dedup();
@@ -124,10 +122,10 @@ async fn checkout(mut conn: VaultDatabase, mut cart: Form<QueryResult<'_>>, cook
     debug!("Cart: {:?}", &cart);
 
     use crate::schema::sample;
-    let mut samples: Vec<Sample> = conn.run(|c| sample::table.filter(sample::id.eq_any(selected_samples)).load(c).expect("Error loading samples")).await;
+    let samples: Vec<Sample> = conn.run(|c| sample::table.filter(sample::id.eq_any(selected_samples)).load(c).expect("Error loading samples")).await;
     //let mut samples = samples.into_iter().map(|ss| ss.to_model()).collect::<Vec<crate::sample::Sample>>();
     
-    let cols = (&mut cart).samplesheet_cols.unwrap_or_default();
+    let _cols = cart.samplesheet_cols.unwrap_or_default();
     // load samplesheet, if we have one
     let samplesheet_id = 0;
     // let samplesheet_id = if let Some(ss) = &mut cart.samplesheet {
@@ -160,7 +158,7 @@ async fn run_query(conn: VaultDatabase, cookies: &CookieJar<'_>, query: Form<Que
     }
 
     let mut samples: Vec<Sample> = if query.filters.is_some() || query.limit.is_some() {
-        let limit = query.limit.clone();
+        let limit = query.limit;
         conn.run(move |c| {
             crate::vaultdb::query(c, "%.fastq.gz", &filters, limit).into_keys().collect::<Vec<Sample>>()
         }).await
@@ -175,7 +173,7 @@ async fn run_query(conn: VaultDatabase, cookies: &CookieJar<'_>, query: Form<Que
 
     // If there is a cookie, also pull the selected samples from there.
     if let Some(ss) = cookies.get("selected_samples") {
-        selected_samples.append(&mut ss.value().split(",").collect::<Vec<&str>>());
+        selected_samples.append(&mut ss.value().split(',').collect::<Vec<&str>>());
     }
     selected_samples.sort_unstable();
     selected_samples.dedup();
@@ -187,7 +185,7 @@ async fn run_query(conn: VaultDatabase, cookies: &CookieJar<'_>, query: Form<Que
     samples.sort_unstable();
     let count = samples.len();
     let selected_samples = samples.iter().map(|s| if selected_samples.contains(&s.id.to_string().as_ref()) { 1 } else { 0 } ).collect::<Vec<u8>>();
-    debug!{"selected samples: {:?}", selected_samples};
+    
     Template::render("query", context!{
         filters: query.filters, 
         limit: query.limit,
@@ -209,7 +207,6 @@ async fn run_query_default(conn: VaultDatabase, filter: Option<String>, limit: O
     }
 
     let mut samples: Vec<Sample> = if filter.is_some() || limit.is_some() {
-        let limit = limit.clone();
         conn.run(move |c| {
             crate::vaultdb::query(c, "%.fastq.gz", &filters, limit).into_keys().collect::<Vec<Sample>>()
         }).await
