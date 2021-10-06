@@ -45,10 +45,6 @@ pub enum Command {
 
     /// Update the database
     Update {
-        /// Force full refresh instead of picking up where it left last time
-        #[structopt(long)]
-        force: bool,
-
         /// Root folder for sequencing runs
         #[structopt(default_value = "/mnt/ngs/01-Rohdaten", long, parse(from_os_str))]
         rundir: PathBuf,

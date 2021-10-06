@@ -12,7 +12,7 @@ use rocket_sync_db_pools::database;
 
 use walkdir::WalkDir;
 
-use crate::sample::{is_dna_nr, normalize_dna_nr};
+use crate::samplesheet::{is_dna_nr, normalize_dna_nr};
 use crate::{models, run};
 
 
@@ -176,8 +176,9 @@ pub fn match_samples(db: &PgConnection, lims_id: Option<i64>, dna_nr: Option<Str
 
     // filter by DNA nr
     let candidates = if let Some(dna_nr) = dna_nr {
+        let dna_nr = normalize_dna_nr(&dna_nr);
         if is_dna_nr(&dna_nr) {
-            candidates.into_iter().filter(|s| s.dna_nr == normalize_dna_nr(&dna_nr) ).collect()
+            candidates.into_iter().filter(|s| s.dna_nr == dna_nr ).collect()
         } else {
             candidates
         }
@@ -192,7 +193,12 @@ pub fn match_samples(db: &PgConnection, lims_id: Option<i64>, dna_nr: Option<Str
     let candidates = if let Some(primer_set) = primer_set {
         
         candidates.into_iter()
-                .filter(|s| if let Some(s_primer_set) = &s.primer_set { primer_set.contains(s_primer_set) } else { false } )
+                .filter(|s| 
+                    if let Some(s_primer_set) = &s.primer_set { 
+                        primer_set.contains(s_primer_set) 
+                    } else { 
+                        true // if primer_set is unknown in DB, it could well be the one in the spreadsheet 
+                    } )
                 .collect()
     } else {
         candidates

@@ -9,6 +9,7 @@ use zip::ZipArchive;
 
 use crate::models;
 use crate::models::NewSample;
+use crate::samplesheet::normalize_dna_nr;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::io::BufReader;
@@ -110,7 +111,7 @@ fn parse_samplename(s: &mut models::NewSample) {
     }
     let oldname = s.name.clone().replace(" ", "_");
     if let Some(captures) = RE_DNA.captures(&oldname) {
-        s.dna_nr = captures.name("dnanr").unwrap().as_str().to_string();
+        s.dna_nr = normalize_dna_nr(captures.name("dnanr").unwrap().as_str());
     }
 
     if let Some(captures) = RE_PRIMER.captures(&oldname) {
