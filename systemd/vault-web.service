@@ -6,9 +6,9 @@ After=postgresql.service
 [Service]
 User=kaessens-j
 Type=exec
-WorkingDirectory=/home/kaessens-j/TheVault/vquery
+WorkingDirectory=/home/kaessens-j/TheVault
 Environment=DATABASE_URL=postgres://vaultadmin@/vault ROCKET_ENV=staging
-ExecStart=bash -c 'ROCKET_ENV=staging ROCKET_DATABASES={vault={url="postgres://vaultadmin@/vault"}} /home/kaessens-j/TheVault/vquery/target/release/vault --connstr postgresql://vaultadmin@/vault web'
+ExecStart=bash -c 'ROCKET_ENV=staging ROCKET_DATABASES={vault={url="postgres://vaultadmin@/vault"}} /home/kaessens-j/TheVault/target/release/vault --connstr postgresql://vaultadmin@/vault web'
 
 [Install]
 WantedBy=multi-user.target

@@ -2,3 +2,5 @@ vquery/target
 .vscode
 test
 vquery/Cargo.lock
+target
+Cargo.lock
