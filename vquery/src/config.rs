@@ -50,7 +50,7 @@ pub enum Command {
         rundir: PathBuf,
 
         /// Root folder for Cellsheet/spikeINBC lookup
-        #[structopt(default_value = "/mnt/kaessens-j/L/05-Molekulargenetik/09-NGS/01-Markerscreening", long, parse(from_os_str))]
+        #[structopt(default_value = "/mnt/L/05-Molekulargenetik/09-NGS/01-Markerscreening", long, parse(from_os_str))]
         celldir: PathBuf,
     },
     /// Start the Rocket handler
@@ -60,7 +60,7 @@ pub enum Command {
 #[derive(StructOpt, Debug)]
 pub struct Opt {
     /// DB connection URI
-    #[structopt(default_value = "postgresql://postgres:password@localhost/vault", long)]
+    #[structopt(default_value = "postgresql://vaultuser:_@vault.med2.uni-kiel.local/vault", long)]
     pub connstr: String,
 
     /// Number of threads to use (default: all cores)
