@@ -11,8 +11,7 @@ mod schema;
 mod models;
 
 use std::path::PathBuf;
-use std::{collections::HashMap, error::Error, fs::File, io::BufRead};
-use std::io::Write;
+use std::{collections::HashMap, error::Error, io::BufRead};
 use diesel::PgConnection;
 use env_logger::Env;
 use structopt::StructOpt;
@@ -69,8 +68,11 @@ fn query(conn: PgConnection, query: String, filter: Vec<String>, limit: Option<u
         ss.extract_fastqs(&conn, &targetdir)?;
     }
     if let Some(targetfile) = samplesheet {
-        let mut f = File::create(targetfile)?;
-        f.write_all(ss.write_csv("\t", &Vec::<&str>::new()).as_bytes())?;
+        match targetfile.extension().unwrap().to_str().unwrap() {
+            "xlsx" => ss.write_xlsx( &Vec::<&str>::new(), &targetfile)?,
+            "csv" => ss.write_csv(",", &Vec::<&str>::new(), &targetfile)?,
+            _ => ss.write_csv("\t", &Vec::<&str>::new(), &targetfile)?
+        }
     }
     Ok(())
 }
@@ -89,9 +91,12 @@ fn import(conn: PgConnection, extract: Option<PathBuf>, samplesheet: Option<Path
 
 
     if let Some(samplesheet) = &samplesheet {
-        let mut f = File::create(samplesheet)?;
         info!("Writing sample sheet to {}...", samplesheet.display());
-        f.write_all(ss.write_csv("\t", &overrides.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()).as_bytes())?;
+        match samplesheet.extension().unwrap().to_str().unwrap() {
+            "xlsx" => ss.write_xlsx(&overrides.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(), samplesheet)?,
+            "csv" => ss.write_csv(",", &overrides.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(), samplesheet)?,
+            _ => ss.write_csv("\t", &overrides.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(), samplesheet)?
+        }
     }
 
     if let Some(extract) = &extract {

@@ -1,11 +1,10 @@
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::{collections::HashMap, convert::TryInto, fs::File, io::Write, path::{Path, PathBuf}};
 
 use calamine::{Reader, Xlsx, open_workbook};
 use diesel::{PgConnection, QueryDsl, RunQueryDsl, ExpressionMethods};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::error::Error;
 use crate::{models, vaultdb::MatchStatus};
-
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -215,7 +214,7 @@ impl SampleSheet {
     }
 
 
-    pub fn write_csv<T: AsRef<str> + PartialEq> (&self, separator: &str, overrides: &[T]) -> String {
+    pub fn write_csv<T: AsRef<str> + PartialEq> (&self, separator: &str, overrides: &[T], outfile: &Path) -> Result<()> {
         let basic_header = vec!["Sample", "run", "DNA nr", "primer set", "project", "LIMS ID", "cells"];
         
         // extra_cols hashmap is not necessarily fully populated for every sample, so check all
@@ -291,6 +290,83 @@ impl SampleSheet {
             csv += "\n";
         }
         
-        csv
+        File::create(outfile)?.write_all(csv.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn write_xlsx<T: AsRef<str> + PartialEq> (&self, overrides: &[T], outfile: &Path) -> Result<()> {
+
+        let basic_header = vec!["Sample", "run", "DNA nr", "primer set", "project", "LIMS ID", "cells"];
+        
+        // extra_cols hashmap is not necessarily fully populated for every sample, so check all
+        let mut all_headers: Vec<String> = self.entries
+                .iter()
+                .map::<Vec<String>,_>(|e| e.extra_cols.keys().cloned().collect())
+                .flatten()
+                .collect();
+        all_headers.sort_unstable();
+        all_headers.dedup();
+
+        //...to not have duplicates in the header lines where extra_cols and the basic headers would overlap
+        let all_sans_basic: Vec<&str> = all_headers.iter().filter(|&h| !basic_header.contains(&(**h).as_ref())).map(|s| s.as_ref()).collect();
+
+        // set up an empty file
+        let workbook = xlsxwriter::Workbook::new(outfile.to_str().unwrap());
+        let mut sheet = workbook.add_worksheet(None)?;
+        
+        // write header
+        for (col, title) in basic_header.iter().chain(all_sans_basic.iter()).enumerate() {
+            sheet.write_string(0, col.clamp(0, u16::MAX.into()) as u16, title, None)?;
+        }
+        let has_multiple_runs = self.has_multiple_runs();
+
+        for (row, e) in self.entries.iter().enumerate() {
+            let row: u32 = (row + 1).try_into().unwrap();
+            // write basic data points
+            for (col_idx, colname) in basic_header.iter().enumerate() {
+                let col_idx: u16 = col_idx.try_into().unwrap();
+                
+                let val = if overrides.iter().any(|x| &x.as_ref() == colname) {
+                    e.extra_cols.get(*colname).unwrap_or(&String::from("")).to_string()
+                } else {
+                    match *colname {
+                        "Sample" => { 
+                            if has_multiple_runs {
+                                format!("{}-{}", e.get_unique_run_id(), e.model.name)
+                            } else {
+                                e.model.name.to_string()
+                            }
+                        },
+                        "run" => { e.model.run.to_string() },
+                        "DNA nr" => { e.model.dna_nr.to_string() },
+                        "primer set" => { e.model.primer_set.as_ref().unwrap_or(&String::from("")).to_string() },
+                        "project" => { e.model.project.to_string() },
+                        "LIMS ID" => { e.model.lims_id.map(|i| i.to_string()).unwrap_or_else(|| String::from("")) },
+                        "cells" => { 
+                            if let Some(cells) = e.model.cells.as_ref() {
+                                cells.to_string()
+                            } else if let Some(cells) = e.extra_cols.get(*colname) {
+                                cells.to_string()
+                            } else {
+                                String::from("")
+                            }
+                            
+                        },
+                        s=> { error!("Unknown header: {}", s); panic!("Matching unknown basic header?!") },
+                    }
+                };
+
+                sheet.write_string(row, col_idx, &val, None)?;
+            }
+
+
+            // write non-basic columns (extra cols from sample sheet)
+            for (col_idx, col) in all_sans_basic.iter().enumerate() {
+                let col_idx: u16 = (basic_header.len() + col_idx).try_into().unwrap();
+                sheet.write_string(row, col_idx, e.extra_cols.get(*col).unwrap_or(&String::from("")), None)?;
+            }
+        }
+        
+        Ok(())
     }
 }

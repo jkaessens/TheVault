@@ -10,7 +10,7 @@ pub enum Command {
         #[structopt(short,long, parse(from_os_str))]
         extract: Option<PathBuf>,
 
-        /// Create samplesheet from results
+        /// Create samplesheet from results. Format depends on filename (.xlsx, .tsv)
         #[structopt(short,long)]
         samplesheet: Option<PathBuf>,
 
@@ -32,7 +32,7 @@ pub enum Command {
         #[structopt(short,long, parse(from_os_str))]
         extract: Option<PathBuf>,
 
-        /// Create samplesheet from results
+        /// Create samplesheet from results. Format depends on filename (.xlsx, .tsv)
         #[structopt(short,long)]
         samplesheet: Option<PathBuf>,
 
