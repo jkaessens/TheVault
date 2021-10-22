@@ -60,11 +60,7 @@ fn parse_from_fastq(samples: &mut Vec<(NewSample, Vec<String>)>, fastq: &str, ru
     let file_name = p.file_name().unwrap().to_string_lossy().to_string();
     p.pop();
     let dir_name = p.file_name().unwrap().to_string_lossy().to_string();
-    let project = if dir_name.starts_with("data_") {
-        String::from("")
-    } else {
-        dir_name
-    };
+    let project = dir_name.starts_with("data_").then(|| dir_name);
 
     let s = if let Some(captures) = RE_NAME.captures(&file_name) {
         let mut s = NewSample {
@@ -122,11 +118,11 @@ fn parse_samplename(s: &mut models::NewSample) {
 }
 
 fn match_fastq(sample: &NewSample, fastq: &str) -> bool {
-    if !sample.dna_nr.is_empty() {
+    if let Some(dna_nr) = sample.dna_nr {
         if let Some(primer_set) = sample.primer_set.as_ref() {
-            fastq.contains(&sample.dna_nr) && fastq.contains(primer_set)
+            fastq.contains(&dna_nr) && fastq.contains(primer_set)
         } else {
-            fastq.contains(&sample.dna_nr)
+            fastq.contains(&dna_nr)
         }
     } else {
         fastq.contains(&sample.name)
@@ -346,7 +342,7 @@ impl Run {
                 }
                 match parts.len() {
                     10 => {
-                        s.project = parts[8].to_string();
+                        s.project = (!parts[8].is_empty()).then(|| parts[8].to_string());
                         s.name = parts[0].to_string();
 
                         // if it parses as unsigned number and it's positive, it might be a
@@ -360,15 +356,15 @@ impl Run {
                         }
                     }
                     9 => {
-                        s.project = parts[8].to_string();
+                        s.project = (!parts[8].is_empty()).then(|| parts[8].to_string());
                         s.name = parts[0].to_string();
                     }
                     7 => {
-                        s.project = parts[5].to_string();
+                        s.project = (!parts[5].is_empty()).then(|| parts[5].to_string());
                         s.name = parts[0].to_string();
                     }
                     6 => {
-                        s.project = parts[4].to_string();
+                        s.project = (!parts[4].is_empty()).then(|| parts[4].to_string());
                         s.name = parts[0].to_string();
                     }
                     _ => {

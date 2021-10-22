@@ -1,52 +1,67 @@
+//! This module contains tools to build sample sheets from lists of samples,
+//! and to export sample sheets to ARResT-compatible formats.
+
 use std::{collections::HashMap, convert::TryInto, fs::File, io::Write, path::{Path, PathBuf}};
+use std::error::Error;
+
+use crate::{models, vaultdb::MatchStatus};
 
 use calamine::{Reader, Xlsx, open_workbook};
 use diesel::{PgConnection, QueryDsl, RunQueryDsl, ExpressionMethods};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::error::Error;
-use crate::{models, vaultdb::MatchStatus};
 
+
+/// A catch-all error type
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+/// A sample sheet containing a list of samples
 #[derive(Debug)]
 pub struct SampleSheet {
+    /// The entries of the sample sheet
     pub entries: Vec<SampleSheetEntry>,
 }
 
+/// An entry of a SampleSheet
 #[derive(Debug,Default)]
 pub struct SampleSheetEntry {
+    /// Sample data accoring to the database
     pub model: models::Sample,
+
+    /// Columns usually imported from an external sample sheet.
+    /// These entries can overlap with basic data. During export,
+    /// the `override` settings control which one to use.
     pub extra_cols: HashMap<String, String>
 }
 
-// Convert DNA numbers to XX-XXXXX format, will be filled up with zeros if necessary
-pub(crate) fn normalize_dna_nr(dnanr: &str) -> String {
+/// Convert DNA numbers to XX-XXXXX format, will be filled up with zeros if necessary.
+/// 
+/// If a DNA number is in a supported format, it will be normalized to a two-digit year
+/// enconding, a dash sign `-` and a five-digit number. A supported input format
+/// * may or may not start with a `D-` prefix
+/// * must contain a number, dash, number sequence
+/// 
+/// If `dnanr` is not in a supported format, `None` is returned.
+/// 
+/// # Example
+/// ```
+/// assert_eq!(Some("01-12345"), normalize_dna_nr("01-12345"))
+/// assert_eq!(Some("01-00123"), normalize_dna_nr("01-345"))
+/// assert_eq!(Some("01-00123"), normalize_dna_nr("D-1-345"))
+/// assert_eq!(None, normalize_dna_nr("asdfjklö"))
+/// ```
+pub(crate) fn normalize_dna_nr(dnanr: &str) -> Option<String> {
     
     let dnanr = dnanr.strip_prefix("D-").unwrap_or(dnanr);
     let parts: Vec<&str> = dnanr.split('-').collect();
     if parts.len() != 2 {
-        return dnanr.to_string();
+        return None;
     }
-    format!(
+    Some(format!(
         "{:02}-{:05}",
         parts[0].parse::<u32>().unwrap(),
         parts[1].parse::<u32>().unwrap()
-    )
+    ))
 }
-
-// Check if given string seems to be a valid DNA number (cheap check, not 100%)
-pub(crate) fn is_dna_nr(dna_nr: &str) -> bool {
-    if dna_nr.len() < 8 {   // XX-XXXXX
-        return false;
-    }
-
-    let actual_dna_nr = dna_nr.strip_prefix("D-").unwrap_or(dna_nr);
-
-    // should be enough, no need to parse for numbers
-    actual_dna_nr.len() == 8 && actual_dna_nr.as_bytes()[2] == b'-'
-
-}
-
 
 impl SampleSheetEntry {
 
@@ -255,9 +270,9 @@ impl SampleSheet {
                             }
                         },
                         "run" => { csv += &e.model.run; },
-                        "DNA nr" => { csv += &e.model.dna_nr; },
+                        "DNA nr" => { csv += &e.model.dna_nr.as_ref().unwrap_or(&String::from("")); },
                         "primer set" => { csv += e.model.primer_set.as_ref().unwrap_or(&String::from("")); },
-                        "project" => { csv += &e.model.project; },
+                        "project" => { csv += &e.model.project.as_ref().unwrap_or(&String::from("")); },
                         "LIMS ID" => { csv += &e.model.lims_id.map(|i| i.to_string()).unwrap_or_else(|| String::from("")); },
                         "cells" => { 
                             if let Some(cells) = e.model.cells.as_ref() {
@@ -338,9 +353,9 @@ impl SampleSheet {
                             }
                         },
                         "run" => { e.model.run.to_string() },
-                        "DNA nr" => { e.model.dna_nr.to_string() },
+                        "DNA nr" => { e.model.dna_nr.unwrap_or(String::from("")) },
                         "primer set" => { e.model.primer_set.as_ref().unwrap_or(&String::from("")).to_string() },
-                        "project" => { e.model.project.to_string() },
+                        "project" => { e.model.project.unwrap_or(String::from("")) },
                         "LIMS ID" => { e.model.lims_id.map(|i| i.to_string()).unwrap_or_else(|| String::from("")) },
                         "cells" => { 
                             if let Some(cells) = e.model.cells.as_ref() {

@@ -12,7 +12,7 @@ use rocket_sync_db_pools::database;
 
 use walkdir::WalkDir;
 
-use crate::samplesheet::{is_dna_nr, normalize_dna_nr};
+use crate::samplesheet::normalize_dna_nr;
 use crate::{models, run};
 
 
@@ -177,7 +177,7 @@ pub fn match_samples(db: &PgConnection, lims_id: Option<i64>, dna_nr: Option<Str
     // filter by DNA nr
     let candidates = if let Some(dna_nr) = dna_nr {
         let dna_nr = normalize_dna_nr(&dna_nr);
-        if is_dna_nr(&dna_nr) {
+        if dna_nr.is_some() {
             candidates.into_iter().filter(|s| s.dna_nr == dna_nr ).collect()
         } else {
             candidates

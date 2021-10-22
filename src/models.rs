@@ -20,8 +20,8 @@ pub struct Run {
 pub struct Sample {
     pub run: String,
     pub name: String,
-    pub dna_nr: String,
-    pub project: String,
+    pub dna_nr: Option<String>,
+    pub project: Option<String>,
     pub lims_id: Option<i64>,
     pub primer_set: Option<String>,
     pub id: i32,
@@ -33,8 +33,8 @@ pub struct Sample {
 pub struct NewSample {
     pub run: String,
     pub name: String,
-    pub dna_nr: String,
-    pub project: String,
+    pub dna_nr: Option<String>,
+    pub project: Option<String>,
     pub lims_id: Option<i64>,
     pub primer_set: Option<String>,
     pub cells: Option<i32>,
