@@ -118,11 +118,11 @@ fn parse_samplename(s: &mut models::NewSample) {
 }
 
 fn match_fastq(sample: &NewSample, fastq: &str) -> bool {
-    if let Some(dna_nr) = sample.dna_nr {
+    if let Some(dna_nr) = sample.dna_nr.as_ref() {
         if let Some(primer_set) = sample.primer_set.as_ref() {
-            fastq.contains(&dna_nr) && fastq.contains(primer_set)
+            fastq.contains(dna_nr) && fastq.contains(primer_set)
         } else {
-            fastq.contains(&dna_nr)
+            fastq.contains(dna_nr)
         }
     } else {
         fastq.contains(&sample.name)

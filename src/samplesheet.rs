@@ -353,9 +353,9 @@ impl SampleSheet {
                             }
                         },
                         "run" => { e.model.run.to_string() },
-                        "DNA nr" => { e.model.dna_nr.unwrap_or(String::from("")) },
+                        "DNA nr" => { e.model.dna_nr.as_ref().map(|s| s.clone()).unwrap_or(String::from("")) },
                         "primer set" => { e.model.primer_set.as_ref().unwrap_or(&String::from("")).to_string() },
-                        "project" => { e.model.project.unwrap_or(String::from("")) },
+                        "project" => { e.model.project.as_ref().map(|s| s.clone()).unwrap_or(String::from("")) },
                         "LIMS ID" => { e.model.lims_id.map(|i| i.to_string()).unwrap_or_else(|| String::from("")) },
                         "cells" => { 
                             if let Some(cells) = e.model.cells.as_ref() {

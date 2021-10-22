@@ -21,8 +21,8 @@ table! {
     sample (id) {
         run -> Varchar,
         name -> Varchar,
-        dna_nr -> Varchar,
-        project -> Varchar,
+        dna_nr -> Nullable<Varchar>,
+        project -> Nullable<Varchar>,
         lims_id -> Nullable<Int8>,
         primer_set -> Nullable<Varchar>,
         id -> Int4,

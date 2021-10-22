@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-
 use diesel::sql_types::Text;
 use rayon::prelude::*;
 use rocket_sync_db_pools::database;
